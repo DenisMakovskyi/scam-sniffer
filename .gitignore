@@ -1,0 +1,17 @@
+.DS_Store
+
+.env
+.idea/
+.venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+*.py[cod]
+*.egg-info/
+
+__pycache__/
+
+dist/
+build/
+models/

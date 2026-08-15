@@ -1,0 +1,22 @@
+name: scam-sniffer
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    environment:
+      POSTGRES_DB: scam_sniffer
+      POSTGRES_USER: scam_sniffer
+      POSTGRES_PASSWORD: scam_sniffer
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scam_sniffer -d scam_sniffer"]
+      timeout: 5s
+      retries: 20
+      interval: 5s
+    restart: unless-stopped
+
+volumes:
+  timescaledb-data:
