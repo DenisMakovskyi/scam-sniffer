@@ -4,13 +4,13 @@ from enum import StrEnum
 
 from scam_sniffer.domain.errors import ScamError
 
-class StockError(ScamError):
+class RepoError(ScamError):
     def __init__(
         self,
-        reason: StockErrorReason,
+        reason: RepoErrorReason,
         message: str,
         operation: str,
-        root_cause: Exception | None = None,
+        root_cause: Exception,
     ) -> None:
         super().__init__(
             reason=reason,
@@ -19,8 +19,7 @@ class StockError(ScamError):
             root_cause=root_cause,
         )
 
-class StockErrorReason(StrEnum):
-    API_ERROR = "api_error"
-    INVALID_LIMIT = "invalid_limit"
-    INVALID_RANGE = "invalid_range"
-    INVALID_CANDLE = "invalid_candle"
+class RepoErrorReason(StrEnum):
+    REMOTE = "remote"
+    MAPPING = "mapping"
+    STORAGE = "storage"

@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-class ApiError(RuntimeError):
+from scam_sniffer.domain.errors import ScamError
+
+class ApiError(ScamError):
     def __init__(
         self,
         reason: ApiErrorReason,
         message: str,
         operation: str,
     ) -> None:
-        super().__init__(message)
-        self.reason = reason
-        self.operation = operation
+        super().__init__(
+            reason=reason,
+            message=message,
+            operation=operation,
+        )
 
 class ApiErrorReason(StrEnum):
     CONNECTION = "connection"

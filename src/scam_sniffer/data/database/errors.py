@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-class DatabaseError(RuntimeError):
+from scam_sniffer.domain.errors import ScamError
+
+class DatabaseError(ScamError):
     def __init__(
         self,
         reason: DatabaseErrorReason,
@@ -10,10 +12,12 @@ class DatabaseError(RuntimeError):
         operation: str,
         root_cause: Exception | None = None,
     ) -> None:
-        super().__init__(message)
-        self.reason = reason
-        self.operation = operation
-        self.root_cause = root_cause
+        super().__init__(
+            reason=reason,
+            message=message,
+            operation=operation,
+            root_cause=root_cause,
+        )
 
 class DatabaseErrorReason(StrEnum):
     QUERY = "query"

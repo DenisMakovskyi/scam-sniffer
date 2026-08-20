@@ -15,8 +15,14 @@ from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
 from scam_sniffer.data.api.client.config import WsConfig
 from scam_sniffer.data.api.stock.base import AbsStock
 from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
-from scam_sniffer.data.api.stock.models import CandleResponse, MarketDto, TransportDto, TimeframeResponse
+from scam_sniffer.data.api.stock.models import (
+    MarketDto,
+    TransportDto,
+    CandleResponse,
+    TimeframeResponse,
+)
 from scam_sniffer.data.api.stock.mapping import BinanceMappingKey, BinanceMappingIndex
+
 from scam_sniffer.utils.datetime import ms_to_sec
 
 class BinanceStock(AbsStock):
@@ -215,7 +221,7 @@ def _rest_build_candles(
         return [
             replace(
                 _rest_build_candle(row=row, symbol=symbol, timeframe=timeframe),
-                is_closed=_rest_close_time(row) <= current_time,
+                is_closed=_rest_close_datetime(row) <= current_time,
             )
             for row in payload
         ]
@@ -226,16 +232,13 @@ def _rest_build_candles(
             operation="get_klines",
         ) from error
 
-def _rest_close_time(row: list[Any]) -> datetime:
-    if len(row) < 11:
-        raise ValueError(f"Expected at least 11 kline fields, received {len(row)}")
-    return datetime.fromtimestamp(
-        tz=UTC,
-        timestamp=ms_to_sec(row[BinanceMappingIndex.CLOSE_TIME]) + 1,
-    )
-
-def _rest_build_candle(row: list[Any], *, symbol: str, timeframe: TimeframeResponse) -> CandleResponse:
-    close_time = _rest_close_time(row)
+def _rest_build_candle(
+    row: list[Any],
+    *,
+    symbol: str,
+    timeframe: TimeframeResponse,
+) -> CandleResponse:
+    close_time = _rest_close_datetime(row)
     return CandleResponse(
         market=MarketDto.BINANCE,
         source=TransportDto.REST,
@@ -255,4 +258,12 @@ def _rest_build_candle(row: list[Any], *, symbol: str, timeframe: TimeframeRespo
         trade_count=int(row[BinanceMappingIndex.TRADE_COUNT]),
         trade_volume=Decimal(str(row[BinanceMappingIndex.TRADE_VOLUME])),
         volume_quote=Decimal(str(row[BinanceMappingIndex.VOLUME_QUOTE])),
+    )
+
+def _rest_close_datetime(row: list[Any]) -> datetime:
+    if len(row) < 11:
+        raise ValueError(f"Expected at least 11 kline fields, received {len(row)}")
+    return datetime.fromtimestamp(
+        tz=UTC,
+        timestamp=ms_to_sec(row[BinanceMappingIndex.CLOSE_TIME]) + 1,
     )

@@ -63,22 +63,22 @@ class CandleResponse:
             if not isinstance(self.timeframe, TimeframeResponse):
                 object.__setattr__(self, "timeframe", TimeframeResponse(self.timeframe))
         except ValueError as error:
-            raise _invalid_candle_err("Market, Source and Timeframe must be supported") from error
+            raise _candle_err("Market, Source and Timeframe must be supported") from error
 
         symbol = self.symbol.upper().strip()
         object.__setattr__(self, "symbol", symbol)
         if not symbol:
-            raise _invalid_candle_err("symbol cannot be empty")
+            raise _candle_err("symbol cannot be empty")
 
         if self.open_time.tzinfo is None or self.close_time.tzinfo is None:
-            raise _invalid_candle_err("candle timestamps must be timezone-aware")
+            raise _candle_err("candle timestamps must be timezone-aware")
         object.__setattr__(self, "open_time", self.open_time.astimezone(UTC))
         object.__setattr__(self, "close_time", self.close_time.astimezone(UTC))
         if self.close_time <= self.open_time:
-            raise _invalid_candle_err("close_time must be after open_time")
+            raise _candle_err("close_time must be after open_time")
         if self.event_time is not None:
             if self.event_time.tzinfo is None:
-                raise _invalid_candle_err("event_time time must be timezone-aware")
+                raise _candle_err("event_time time must be timezone-aware")
             object.__setattr__(
                 self,
                 "event_time",
@@ -86,18 +86,18 @@ class CandleResponse:
             )
 
         if self.highest_price < max(self.open_price, self.close_price, self.lowest_price):
-            raise _invalid_candle_err("highest_price must be greater than or equal to OHLC values")
+            raise _candle_err("highest_price must be greater than or equal to OHLC values")
         if self.lowest_price > min(self.open_price, self.close_price, self.highest_price):
-            raise _invalid_candle_err("lowest_price must be less than or equal to OHLC values")
+            raise _candle_err("lowest_price must be less than or equal to OHLC values")
 
         if self.trade_count is not None and self.trade_count < 0:
-            raise _invalid_candle_err("trade_count cannot be negative")
+            raise _candle_err("trade_count cannot be negative")
         if self.trade_volume < 0:
-            raise _invalid_candle_err("trade_volume cannot be negative")
+            raise _candle_err("trade_volume cannot be negative")
         if self.volume_quote is not None and self.volume_quote < 0:
-            raise _invalid_candle_err("volume_quote cannot be negative")
+            raise _candle_err("volume_quote cannot be negative")
 
-def _invalid_candle_err(message: str) -> StockError:
+def _candle_err(message: str) -> StockError:
     return StockError(
         reason=StockErrorReason.INVALID_CANDLE,
         message=message,

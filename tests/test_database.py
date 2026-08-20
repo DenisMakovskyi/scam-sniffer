@@ -11,6 +11,7 @@ import pytest
 import asyncpg
 
 from scam_sniffer.data.api.stock.models import CandleResponse
+from scam_sniffer.domain.models import Candle
 from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
 from scam_sniffer.data.database.engine import DatabaseConfig, DatabaseEngine
 from scam_sniffer.data.database.entities import CandleEntity
@@ -127,6 +128,7 @@ def test_upsert_protects_closed_and_newer_candles() -> None:
     assert "EXCLUDED.event_time >= candles.event_time" in CANDLE_UPSERT
 
 def test_related_candle_fields_keep_the_same_order() -> None:
+    domain_fields = [field.name for field in fields(Candle)]
     entity_fields = [field.name for field in fields(CandleEntity)]
     response_fields = [field.name for field in fields(CandleResponse)]
     common_response_fields = [name for name in response_fields if name in entity_fields]
@@ -135,6 +137,7 @@ def test_related_candle_fields_keep_the_same_order() -> None:
     migration = _MIGRATION_PATH.read_text(encoding="utf-8")
     migration_positions = [migration.index(f"    {name} ") for name in entity_fields]
 
+    assert domain_fields == entity_fields
     assert entity_fields == common_response_fields
     assert schema_fields == entity_fields
     assert migration_positions == sorted(migration_positions)
