@@ -1,3 +1,5 @@
+"""Database access object for persisted candles."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,10 +19,18 @@ from scam_sniffer.data.database.schema.candle import (
     CANDLE_UPSERT,
     CANDLE_SELECT_RANGE,
     CANDLE_SELECT_LATEST,
+    CANDLE_SELECT_LATEST_CLOSED,
 )
 
 class CandleDao:
+    """Execute candle CRUD operations against PostgreSQL."""
+
     def __init__(self, pool: asyncpg.Pool) -> None:
+        """Initialize the DAO with an active PostgreSQL pool.
+
+        Args:
+            pool: Connection pool used for every candle query.
+        """
         self._pool = pool
 
     # Select region
@@ -32,6 +42,20 @@ class CandleDao:
         timeframe: str,
         open_time: datetime,
     ) -> CandleEntity | None:
+        """Select a candle by its composite identity.
+
+        Args:
+            market: Persisted exchange identifier.
+            symbol: Persisted trading pair symbol.
+            timeframe: Persisted candle interval identifier.
+            open_time: Inclusive candle boundary identifying the row.
+
+        Returns:
+            Matching candle entity, or ``None`` when no row exists.
+
+        Raises:
+            DatabaseError: If the query fails.
+        """
         try:
             row = await self._pool.fetchrow(
                 CANDLE_SELECT,
@@ -52,6 +76,21 @@ class CandleDao:
         start_time: datetime,
         finish_time: datetime,
     ) -> list[CandleEntity]:
+        """Select candles inside a half-open time range.
+
+        Args:
+            market: Persisted exchange identifier.
+            symbol: Persisted trading pair symbol.
+            timeframe: Persisted candle interval identifier.
+            start_time: Inclusive range boundary.
+            finish_time: Exclusive range boundary.
+
+        Returns:
+            Matching entities ordered by open time.
+
+        Raises:
+            DatabaseError: If the query fails.
+        """
         try:
             rows = await self._pool.fetch(
                 CANDLE_SELECT_RANGE,
@@ -71,6 +110,19 @@ class CandleDao:
         symbol: str,
         timeframe: str,
     ) -> CandleEntity | None:
+        """Select the most recent candle in a series.
+
+        Args:
+            market: Persisted exchange identifier.
+            symbol: Persisted trading pair symbol.
+            timeframe: Persisted candle interval identifier.
+
+        Returns:
+            Latest candle entity, or ``None`` when the series is empty.
+
+        Raises:
+            DatabaseError: If the query fails.
+        """
         try:
             row = await self._pool.fetchrow(
                 CANDLE_SELECT_LATEST,
@@ -82,9 +134,47 @@ class CandleDao:
             raise _db_query_error(operation="select_latest", root_cause=error) from error
         return _build_entity(row) if row is not None else None
 
+    async def select_latest_closed(
+        self,
+        market: str,
+        symbol: str,
+        timeframe: str,
+    ) -> CandleEntity | None:
+        """Select the most recent finalized candle in a series.
+
+        Args:
+            market: Persisted exchange identifier.
+            symbol: Persisted trading pair symbol.
+            timeframe: Persisted candle interval identifier.
+
+        Returns:
+            Latest closed candle entity, or ``None`` when none exists.
+
+        Raises:
+            DatabaseError: If the query fails.
+        """
+        try:
+            row = await self._pool.fetchrow(
+                CANDLE_SELECT_LATEST_CLOSED,
+                market,
+                symbol,
+                timeframe,
+            )
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
+            raise _db_query_error(operation="select_latest_closed", root_cause=error) from error
+        return _build_entity(row) if row is not None else None
+
     # Create region
 
     async def create(self, entity: CandleEntity) -> None:
+        """Insert a candle without conflict resolution.
+
+        Args:
+            entity: Candle row to insert.
+
+        Raises:
+            DatabaseError: If the insert fails.
+        """
         try:
             await self._pool.execute(CANDLE_CREATE, *_entity_args(entity))
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
@@ -93,6 +183,17 @@ class CandleDao:
     # Upsert region
 
     async def upsert_one(self, entity: CandleEntity) -> bool:
+        """Insert one candle or update a newer non-final snapshot.
+
+        Args:
+            entity: Candle row to persist.
+
+        Returns:
+            Whether PostgreSQL inserted or updated the row.
+
+        Raises:
+            DatabaseError: If the upsert fails.
+        """
         try:
             status = await self._pool.execute(CANDLE_UPSERT, *_entity_args(entity))
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
@@ -100,6 +201,14 @@ class CandleDao:
         return _rows_count(status) == 1
 
     async def upsert_many(self, entities: Sequence[CandleEntity]) -> None:
+        """Upsert multiple candles while preserving input order.
+
+        Args:
+            entities: Candle rows to persist.
+
+        Raises:
+            DatabaseError: If any upsert fails.
+        """
         if not entities:
             return
         try:
@@ -113,6 +222,17 @@ class CandleDao:
     # Update region
 
     async def update(self, entity: CandleEntity) -> bool:
+        """Update a candle selected by its composite identity.
+
+        Args:
+            entity: Candle row containing identity and replacement values.
+
+        Returns:
+            Whether PostgreSQL updated one row.
+
+        Raises:
+            DatabaseError: If the update fails.
+        """
         try:
             status = await self._pool.execute(CANDLE_UPDATE, *_entity_args(entity))
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
@@ -128,6 +248,20 @@ class CandleDao:
         timeframe: str,
         open_time: datetime,
     ) -> bool:
+        """Delete a candle by its composite identity.
+
+        Args:
+            market: Persisted exchange identifier.
+            symbol: Persisted trading pair symbol.
+            timeframe: Persisted candle interval identifier.
+            open_time: Inclusive candle boundary identifying the row.
+
+        Returns:
+            Whether PostgreSQL deleted one row.
+
+        Raises:
+            DatabaseError: If the delete fails.
+        """
         try:
             status = await self._pool.execute(
                 CANDLE_DELETE,
@@ -141,12 +275,28 @@ class CandleDao:
         return _rows_count(status) == 1
 
 def _rows_count(status: str) -> int:
+    """Extract the affected-row count from a PostgreSQL command status.
+
+    Args:
+        status: Status string returned by ``asyncpg``.
+
+    Returns:
+        Parsed row count, or zero when the status is malformed.
+    """
     try:
         return int(status.rsplit(maxsplit=1)[-1])
     except (IndexError, ValueError):
         return 0
 
 def _entity_args(entity: CandleEntity) -> tuple[Any, ...]:
+    """Convert a candle entity to SQL arguments in schema order.
+
+    Args:
+        entity: Candle row to serialize.
+
+    Returns:
+        Values ordered exactly like the candle SQL columns.
+    """
     return (
         entity.market,
         entity.symbol,
@@ -165,6 +315,14 @@ def _entity_args(entity: CandleEntity) -> tuple[Any, ...]:
     )
 
 def _build_entity(row: Mapping[str, Any]) -> CandleEntity:
+    """Build a candle entity from a database row mapping.
+
+    Args:
+        row: Database values keyed by candle column name.
+
+    Returns:
+        Candle persistence entity.
+    """
     return CandleEntity(
         market=row["market"],
         symbol=row["symbol"],
@@ -183,6 +341,15 @@ def _build_entity(row: Mapping[str, Any]) -> CandleEntity:
     )
 
 def _db_query_error(operation: str, root_cause: Exception) -> DatabaseError:
+    """Wrap a driver exception as a categorized database error.
+
+    Args:
+        operation: DAO operation active during the failure.
+        root_cause: Original driver exception.
+
+    Returns:
+        Database query error retaining the original cause.
+    """
     return DatabaseError(
         reason=DatabaseErrorReason.QUERY,
         message="Database query failed",

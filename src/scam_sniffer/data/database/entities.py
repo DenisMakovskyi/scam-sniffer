@@ -1,3 +1,5 @@
+"""Persistence entities stored by database access objects."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +9,25 @@ from datetime import datetime
 
 @dataclass(frozen=True, slots=True)
 class CandleEntity:
+    """Represent one candle row in database-compatible types.
+
+    Attributes:
+        market: Persisted exchange identifier.
+        symbol: Persisted trading pair symbol.
+        is_closed: Whether the exchange finalized the candle.
+        timeframe: Persisted candle interval identifier.
+        open_time: Inclusive candle boundary.
+        close_time: Exclusive candle boundary.
+        event_time: Latest exchange event time, if available.
+        open_price: First traded price in the interval.
+        close_price: Last traded price in the interval.
+        lowest_price: Lowest traded price in the interval.
+        highest_price: Highest traded price in the interval.
+        trade_count: Number of trades in the interval, if available.
+        trade_volume: Base-asset volume traded in the interval.
+        volume_quote: Quote-asset volume traded in the interval, if available.
+    """
+
     market: str
     symbol: str
     is_closed: bool

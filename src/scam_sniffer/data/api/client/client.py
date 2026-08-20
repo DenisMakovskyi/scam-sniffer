@@ -1,3 +1,5 @@
+"""Shared asynchronous HTTP and WebSocket client."""
+
 from __future__ import annotations
 
 from typing import Any, TypeVar
@@ -17,6 +19,8 @@ from scam_sniffer.data.api.client.config import WsConfig
 T = TypeVar("T")
 
 class ApiClient:
+    """Execute remote transport operations with bounded HTTP retries."""
+
     __MAX_RETRY_DELAY_SECONDS = 30.0
 
     def __init__(
@@ -26,9 +30,20 @@ class ApiClient:
         max_attempts: int,
         rate_limit_codes: frozenset[HTTPStatus],
     ) -> None:
+        """Initialize the shared transport client.
+
+        Args:
+            client: Configured asynchronous HTTP client.
+            ws_config: WebSocket connection configuration.
+            max_attempts: Maximum number of HTTP attempts per request.
+            rate_limit_codes: HTTP statuses that trigger rate-limit retries.
+
+        Raises:
+            ApiError: If the retry count is not positive.
+        """
         if max_attempts < 1:
             raise ApiError(
-                reason=ApiErrorReason.INVALID_CONFIG,
+                reason=ApiErrorReason.CONF,
                 message="API retry count must be positive",
                 operation="init",
             )
@@ -39,9 +54,22 @@ class ApiClient:
         self._rate_limit_codes = rate_limit_codes
 
     async def close(self) -> None:
+        """Close the underlying HTTP client."""
         await self._client.aclose()
 
     async def http_get(self, path: str, params: dict[str, Any]) -> Any:
+        """Execute a JSON HTTP GET request with bounded retries.
+
+        Args:
+            path: Relative or absolute request path.
+            params: Query parameters sent with the request.
+
+        Returns:
+            Decoded JSON response payload.
+
+        Raises:
+            ApiError: If the response is invalid, rate limited, or unavailable.
+        """
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
@@ -49,8 +77,8 @@ class ApiClient:
                 if response.status_code in self._rate_limit_codes:
                     if attempt == self._max_attempts:
                         raise ApiError(
-                            reason=ApiErrorReason.RATE_LIMIT,
-                            message="API rate limit remained active after bounded retries",
+                            reason=ApiErrorReason.RATE_LIMIT_EXCEEDED,
+                            message="API rate limit is exceeded after bounded retries",
                             operation="get",
                         )
                     await asyncio.sleep(_retry_delay(response=response, attempt=attempt))
@@ -61,8 +89,8 @@ class ApiClient:
                 raise
             except ValueError as error:
                 raise ApiError(
-                    reason=ApiErrorReason.INVALID_RESPONSE,
-                    message="API returned invalid response metadata or JSON",
+                    reason=ApiErrorReason.NEGOTIATION,
+                    message="API returned invalid response",
                     operation="get",
                 ) from error
             except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as error:
@@ -82,6 +110,18 @@ class ApiClient:
         stream_name: str,
         event_parser: Callable[[Any], T],
     ) -> AsyncIterator[T]:
+        """Stream parsed events from a WebSocket endpoint.
+
+        Args:
+            stream_name: Endpoint-specific WebSocket stream identifier.
+            event_parser: Function that converts decoded JSON into a transport model.
+
+        Yields:
+            Parsed events in their original stream order.
+
+        Raises:
+            ApiError: If connection, decoding, or event parsing fails.
+        """
         try:
             async with websockets.connect(
                 uri=f"{self._ws_config.ws_url.rstrip('/')}/{stream_name}",
@@ -95,7 +135,7 @@ class ApiClient:
                         event = json.loads(message)
                     except (TypeError, json.JSONDecodeError) as error:
                         raise ApiError(
-                            reason=ApiErrorReason.INVALID_RESPONSE,
+                            reason=ApiErrorReason.NEGOTIATION,
                             message="API returned an invalid WebSocket message",
                             operation="stream",
                         ) from error
@@ -112,6 +152,15 @@ class ApiClient:
             ) from error
 
 def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    """Return the server retry delay or an attempt-based fallback.
+
+    Args:
+        response: Rate-limited HTTP response.
+        attempt: Current one-based attempt number.
+
+    Returns:
+        Delay in seconds before the next request attempt.
+    """
     retry_after = response.headers.get("Retry-After")
     if retry_after is None:
         return float(attempt)

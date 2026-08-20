@@ -69,7 +69,7 @@ async def test_stream_rejects_invalid_json(
     finally:
         await api_client.close()
 
-    assert error_info.value.reason is ApiErrorReason.INVALID_RESPONSE
+    assert error_info.value.reason is ApiErrorReason.NEGOTIATION
 
 @pytest.mark.asyncio
 async def test_rate_limit_raises_typed_error() -> None:
@@ -87,7 +87,7 @@ async def test_rate_limit_raises_typed_error() -> None:
     finally:
         await api_client.close()
 
-    assert error_info.value.reason is ApiErrorReason.RATE_LIMIT
+    assert error_info.value.reason is ApiErrorReason.RATE_LIMIT_EXCEEDED
 
 @pytest.mark.asyncio
 async def test_stream_delivers_config_and_parsed_events(

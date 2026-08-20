@@ -21,7 +21,7 @@ from scam_sniffer.domain.models import Candle, Market, Timeframe
 from scam_sniffer.domain.repository.candle import CandleRepository
 from scam_sniffer.data.repository.candle import CandleRepositoryImpl
 from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
-from scam_sniffer.domain.repository.errors import RepoError, RepoErrorReason
+from scam_sniffer.domain.errors import DomainError, DomainErrorReason
 from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
 
 class FakeStock:
@@ -80,6 +80,16 @@ class FakeCandleDao:
             raise self.error
         return self.entities
 
+    async def select_latest_closed(
+        self,
+        market: str,
+        symbol: str,
+        timeframe: str,
+    ) -> CandleEntity | None:
+        if self.error is not None:
+            raise self.error
+        return self.entities[-1] if self.entities else None
+
     async def upsert_one(self, entity: CandleEntity) -> bool:
         if self.error is not None:
             raise self.error
@@ -122,8 +132,14 @@ async def test_select_candles_maps_entities_to_domain() -> None:
         start_time=datetime(2025, 1, 1, tzinfo=UTC),
         finish_time=datetime(2025, 1, 2, tzinfo=UTC),
     )
+    latest_candle = await repository.select_latest_closed_candle(
+        market=Market.BINANCE,
+        symbol="BTCUSDT",
+        timeframe=Timeframe.M5,
+    )
 
     assert candles == [_candle()]
+    assert latest_candle == _candle()
 
 @pytest.mark.asyncio
 async def test_stream_candles_persists_every_update() -> None:
@@ -154,7 +170,7 @@ async def test_fetch_candles_absorbs_stock_error() -> None:
         dao=FakeCandleDao(),
     )
 
-    with pytest.raises(RepoError) as error_info:
+    with pytest.raises(DomainError) as error_info:
         await repository.fetch_candles(
             symbol="BTCUSDT",
             k_limit=100,
@@ -164,7 +180,7 @@ async def test_fetch_candles_absorbs_stock_error() -> None:
         )
 
     error = error_info.value
-    assert error.reason is RepoErrorReason.REMOTE
+    assert error.reason is DomainErrorReason.REMOTE
     assert error.root_cause is stock_error
     assert error.__cause__ is stock_error
 
@@ -180,7 +196,7 @@ async def test_fetch_candles_absorbs_database_error() -> None:
         dao=FakeCandleDao(error=database_error),
     )
 
-    with pytest.raises(RepoError) as error_info:
+    with pytest.raises(DomainError) as error_info:
         await repository.fetch_candles(
             symbol="BTCUSDT",
             k_limit=100,
@@ -190,7 +206,7 @@ async def test_fetch_candles_absorbs_database_error() -> None:
         )
 
     error = error_info.value
-    assert error.reason is RepoErrorReason.STORAGE
+    assert error.reason is DomainErrorReason.STORAGE
     assert error.root_cause is database_error
     assert error.__cause__ is database_error
 
@@ -202,7 +218,7 @@ async def test_select_candles_absorbs_mapping_error() -> None:
         dao=FakeCandleDao(entities=[invalid_entity]),
     )
 
-    with pytest.raises(RepoError) as error_info:
+    with pytest.raises(DomainError) as error_info:
         await repository.select_candles(
             market=Market.BINANCE,
             symbol="BTCUSDT",
@@ -212,7 +228,7 @@ async def test_select_candles_absorbs_mapping_error() -> None:
         )
 
     error = error_info.value
-    assert error.reason is RepoErrorReason.MAPPING
+    assert error.reason is DomainErrorReason.MAPPING
     assert isinstance(error.root_cause, ValueError)
     assert error.__cause__ is error.root_cause
 

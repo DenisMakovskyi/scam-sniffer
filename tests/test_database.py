@@ -16,7 +16,11 @@ from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
 from scam_sniffer.data.database.engine import DatabaseConfig, DatabaseEngine
 from scam_sniffer.data.database.entities import CandleEntity
 from scam_sniffer.data.database.dao.candle import CandleDao
-from scam_sniffer.data.database.schema.candle import CANDLE_UPSERT, COLUMNS_CANDLE
+from scam_sniffer.data.database.schema.candle import (
+    CANDLE_UPSERT,
+    COLUMNS_CANDLE,
+    CANDLE_SELECT_LATEST_CLOSED,
+)
 
 _MIGRATION_PATH = (
     Path(__file__).parents[1]
@@ -57,7 +61,7 @@ def test_database_config_rejects_invalid_pool_size() -> None:
             pool_max_size=1,
         )
 
-    assert error_info.value.reason is DatabaseErrorReason.INVALID_CONFIG
+    assert error_info.value.reason is DatabaseErrorReason.CONF
 
 def test_engine_requires_connection_before_pool_access() -> None:
     engine = DatabaseEngine(DatabaseConfig(dsn="postgresql://localhost/scam_sniffer"))
@@ -65,7 +69,7 @@ def test_engine_requires_connection_before_pool_access() -> None:
     with pytest.raises(DatabaseError) as error_info:
         _ = engine.pool
 
-    assert error_info.value.reason is DatabaseErrorReason.NOT_CONNECTED
+    assert error_info.value.reason is DatabaseErrorReason.CONNECTION
 
 @pytest.mark.asyncio
 async def test_dao_crud_uses_candle_entity_values() -> None:
@@ -108,6 +112,11 @@ async def test_dao_reads_entities_and_upserts_batches() -> None:
         symbol=entity.symbol,
         timeframe=entity.timeframe,
     )
+    latest_closed = await dao.select_latest_closed(
+        market=entity.market,
+        symbol=entity.symbol,
+        timeframe=entity.timeframe,
+    )
     candles = await dao.select_range(
         market=entity.market,
         symbol=entity.symbol,
@@ -119,6 +128,7 @@ async def test_dao_reads_entities_and_upserts_batches() -> None:
 
     assert stored == entity
     assert latest == entity
+    assert latest_closed == entity
     assert candles == [entity]
     assert pool.calls[-2][0] == CANDLE_UPSERT
     assert pool.calls[-1][0] == CANDLE_UPSERT
@@ -126,6 +136,9 @@ async def test_dao_reads_entities_and_upserts_batches() -> None:
 def test_upsert_protects_closed_and_newer_candles() -> None:
     assert "WHERE NOT candles.is_closed" in CANDLE_UPSERT
     assert "EXCLUDED.event_time >= candles.event_time" in CANDLE_UPSERT
+
+def test_latest_query_selects_only_closed_candles() -> None:
+    assert "AND is_closed" in CANDLE_SELECT_LATEST_CLOSED
 
 def test_related_candle_fields_keep_the_same_order() -> None:
     domain_fields = [field.name for field in fields(Candle)]

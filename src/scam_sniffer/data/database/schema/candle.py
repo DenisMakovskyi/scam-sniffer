@@ -1,3 +1,5 @@
+"""SQL statements for candle persistence and retrieval."""
+
 from __future__ import annotations
 
 TABLE_CANDLE = "candles"
@@ -44,6 +46,16 @@ CANDLE_SELECT_LATEST = (f"\n"
                         f"  AND timeframe = $3\n"
                         f"ORDER BY open_time DESC\n"
                         f"LIMIT 1\n")
+
+CANDLE_SELECT_LATEST_CLOSED = (f"\n"
+                               f"SELECT {COLUMNS_CANDLE}\n"
+                               f"FROM {TABLE_CANDLE}\n"
+                               f"WHERE market = $1\n"
+                               f"  AND symbol = $2\n"
+                               f"  AND timeframe = $3\n"
+                               f"  AND is_closed\n"
+                               f"ORDER BY open_time DESC\n"
+                               f"LIMIT 1\n")
 
 CANDLE_CREATE = (f"\n"
                  f"INSERT INTO {TABLE_CANDLE} (\n"

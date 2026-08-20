@@ -1,6 +1,10 @@
+"""Binance payload keys and positional field indexes."""
+
 from enum import IntEnum, StrEnum
 
 class BinanceMappingKey(StrEnum):
+    """Map normalized candle fields to Binance WebSocket keys."""
+
     SYMBOL = "s"
     IS_CLOSED = "x"
     TIMEFRAME = "i"
@@ -16,6 +20,8 @@ class BinanceMappingKey(StrEnum):
     VOLUME_QUOTE = "q"
 
 class BinanceMappingIndex(IntEnum):
+    """Map normalized candle fields to Binance REST row indexes."""
+
     OPEN_TIME = 0
     CLOSE_TIME = 6
     OPEN_PRICE = 1

@@ -1,3 +1,5 @@
+"""PostgreSQL connection pooling and migration lifecycle."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,47 +22,81 @@ _MIGRATION_PATH = Path(__file__).with_name("migrations")
 
 @dataclass(frozen=True, slots=True)
 class DatabaseConfig:
+    """Configure the PostgreSQL connection pool.
+
+    Attributes:
+        dsn: PostgreSQL connection string.
+        pool_min_size: Minimum number of open pool connections.
+        pool_max_size: Maximum number of open pool connections.
+        command_timeout: Default SQL command timeout in seconds.
+    """
+
     dsn: str
     pool_min_size: int = 1
     pool_max_size: int = 10
     command_timeout: float = 30.0
 
     def __post_init__(self) -> None:
+        """Validate the connection and pool settings.
+
+        Raises:
+            DatabaseError: If the DSN, pool sizes, or timeout is invalid.
+        """
         if not self.dsn.strip():
             raise DatabaseError(
-                reason=DatabaseErrorReason.INVALID_CONFIG,
+                reason=DatabaseErrorReason.CONF,
                 message="Database DSN cannot be empty",
                 operation="init",
             )
         if self.pool_min_size < 1 or self.pool_max_size < self.pool_min_size:
             raise DatabaseError(
-                reason=DatabaseErrorReason.INVALID_CONFIG,
+                reason=DatabaseErrorReason.CONF,
                 message="Database pool sizes are invalid",
                 operation="init",
             )
         if self.command_timeout <= 0:
             raise DatabaseError(
-                reason=DatabaseErrorReason.INVALID_CONFIG,
+                reason=DatabaseErrorReason.CONF,
                 message="Database command timeout must be positive",
                 operation="init",
             )
 
 class DatabaseEngine:
+    """Own a PostgreSQL connection pool and apply versioned migrations."""
+
     def __init__(self, config: DatabaseConfig) -> None:
+        """Initialize a disconnected database engine.
+
+        Args:
+            config: Validated PostgreSQL pool configuration.
+        """
         self._pool: asyncpg.Pool | None = None
         self._config = config
 
     @property
     def pool(self) -> asyncpg.Pool:
+        """Return the active PostgreSQL pool.
+
+        Returns:
+            Connected PostgreSQL pool.
+
+        Raises:
+            DatabaseError: If the engine is not connected.
+        """
         if self._pool is None:
             raise DatabaseError(
-                reason=DatabaseErrorReason.NOT_CONNECTED,
+                reason=DatabaseErrorReason.CONNECTION,
                 message="Database engine is not connected",
                 operation="pool",
             )
         return self._pool
 
     async def close(self) -> None:
+        """Close the active PostgreSQL pool.
+
+        Raises:
+            DatabaseError: If pool shutdown fails.
+        """
         if self._pool is None:
             return
         try:
@@ -75,6 +111,11 @@ class DatabaseEngine:
             ) from error
 
     async def connect(self) -> None:
+        """Create the PostgreSQL pool when it is not connected.
+
+        Raises:
+            DatabaseError: If a pool connection cannot be established.
+        """
         if self._pool is not None:
             return
         try:
@@ -93,6 +134,11 @@ class DatabaseEngine:
             ) from error
 
     async def migrate(self) -> None:
+        """Apply every pending SQL migration under an advisory lock.
+
+        Raises:
+            DatabaseError: If migrations are missing or cannot be applied.
+        """
         migrations = sorted(_MIGRATION_PATH.glob("*.sql"))
         if not migrations:
             raise DatabaseError(
@@ -124,6 +170,12 @@ async def _apply_migration(
     migration: Path,
     connection: asyncpg.Connection,
 ) -> None:
+    """Apply one unapplied SQL migration transactionally.
+
+    Args:
+        migration: SQL migration file whose stem is the version identifier.
+        connection: Locked PostgreSQL connection used for the migration.
+    """
     version = migration.stem
     is_applied = await connection.fetchval(MIGRATION_VERSION_READ, version)
     if is_applied:

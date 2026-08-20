@@ -15,8 +15,8 @@ dependencies = [
   "httpx>=0.28,<1",
   "fastapi>=0.115,<1",
   "websockets>=14,<16",
-  "asyncpg>=0.30,<1",
   "uvicorn[standard]>=0.34,<1",
+  "asyncpg>=0.30,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
   "structlog>=24.4,<26",
@@ -44,8 +44,14 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "UP", "B", "SIM", "ASYNC", "RUF"]
+select = ["E", "F", "UP", "B", "SIM", "ASYNC", "RUF", "D"]
 ignore = ["E302", "E305"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,3 +1,5 @@
+"""SQL statements shared by the database migration engine."""
+
 MIGRATION_LOCK = "SELECT pg_advisory_lock(hashtext('scam_sniffer_migrations'))"
 MIGRATION_UNLOCK = "SELECT pg_advisory_unlock(hashtext('scam_sniffer_migrations'))"
 

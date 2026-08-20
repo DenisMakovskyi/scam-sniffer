@@ -108,7 +108,7 @@ async def test_stream_klines_absorbs_invalid_response_as_api_error(
     error = error_info.value
     assert error.reason is StockErrorReason.API_ERROR
     assert isinstance(error.root_cause, ApiError)
-    assert error.root_cause.reason is ApiErrorReason.INVALID_RESPONSE
+    assert error.root_cause.reason is ApiErrorReason.NEGOTIATION
     assert error.__cause__ is error.root_cause
 
 @pytest.mark.asyncio
@@ -181,7 +181,7 @@ async def test_get_klines_absorbs_api_error_as_root_cause() -> None:
     error = error_info.value
     assert error.reason is StockErrorReason.API_ERROR
     assert isinstance(error.root_cause, ApiError)
-    assert error.root_cause.reason is ApiErrorReason.RATE_LIMIT
+    assert error.root_cause.reason is ApiErrorReason.RATE_LIMIT_EXCEEDED
     assert error.__cause__ is error.root_cause
 
 def test_init_absorbs_api_config_error_as_root_cause() -> None:
@@ -191,7 +191,7 @@ def test_init_absorbs_api_config_error_as_root_cause() -> None:
     error = error_info.value
     assert error.reason is StockErrorReason.API_ERROR
     assert isinstance(error.root_cause, ApiError)
-    assert error.root_cause.reason is ApiErrorReason.INVALID_CONFIG
+    assert error.root_cause.reason is ApiErrorReason.CONF
     assert error.__cause__ is error.root_cause
 
 @pytest.mark.asyncio
@@ -219,5 +219,5 @@ async def test_get_klines_absorbs_invalid_response_as_api_error() -> None:
     error = error_info.value
     assert error.reason is StockErrorReason.API_ERROR
     assert isinstance(error.root_cause, ApiError)
-    assert error.root_cause.reason is ApiErrorReason.INVALID_RESPONSE
+    assert error.root_cause.reason is ApiErrorReason.NEGOTIATION
     assert error.__cause__ is error.root_cause

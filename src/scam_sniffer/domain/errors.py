@@ -1,19 +1,39 @@
+"""Failures exposed by domain repository operations."""
+
 from __future__ import annotations
 
 from enum import StrEnum
 
-class ScamError(RuntimeError):
+from scam_sniffer.errors import ScamError
+
+class DomainError(ScamError):
+    """Represent a repository failure at the domain boundary."""
+
     def __init__(
         self,
-        reason: StrEnum,
+        reason: DomainErrorReason,
         message: str,
         operation: str,
         root_cause: Exception | None = None,
     ) -> None:
-        super().__init__(message)
-        self.reason = reason
-        self.operation = operation
-        self.root_cause = root_cause
+        """Initialize a domain repository failure.
 
-class ScamErrorReason(StrEnum):
-    INVALID_CANDLE = "invalid_candle"
+        Args:
+            reason: Domain failure category.
+            message: Human-readable failure description.
+            operation: Repository operation active during the failure.
+            root_cause: Lower-level data-source failure, if available.
+        """
+        super().__init__(
+            reason=reason,
+            message=message,
+            operation=operation,
+            root_cause=root_cause,
+        )
+
+class DomainErrorReason(StrEnum):
+    """Categorize failures crossing the domain repository boundary."""
+
+    REMOTE = "remote"
+    MAPPING = "mapping"
+    STORAGE = "storage"

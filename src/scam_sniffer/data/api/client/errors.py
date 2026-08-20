@@ -1,16 +1,27 @@
+"""Failures raised by shared remote API transports."""
+
 from __future__ import annotations
 
 from enum import StrEnum
 
-from scam_sniffer.domain.errors import ScamError
+from scam_sniffer.errors import ScamError
 
 class ApiError(ScamError):
+    """Represent an HTTP or WebSocket transport failure."""
+
     def __init__(
         self,
         reason: ApiErrorReason,
         message: str,
         operation: str,
     ) -> None:
+        """Initialize an API transport failure.
+
+        Args:
+            reason: Transport failure category.
+            message: Human-readable failure description.
+            operation: Transport operation active during the failure.
+        """
         super().__init__(
             reason=reason,
             message=message,
@@ -18,7 +29,9 @@ class ApiError(ScamError):
         )
 
 class ApiErrorReason(StrEnum):
+    """Categorize failures produced by the shared API client."""
+
+    CONF = "conf"
     CONNECTION = "connection"
-    RATE_LIMIT = "rate_limit"
-    INVALID_CONFIG = "invalid_config"
-    INVALID_RESPONSE = "invalid_response"
+    NEGOTIATION = "negotiation"
+    RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"

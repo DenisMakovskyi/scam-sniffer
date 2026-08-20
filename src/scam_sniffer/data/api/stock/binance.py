@@ -1,3 +1,5 @@
+"""Binance Futures market-data source implementation."""
+
 from __future__ import annotations
 
 from typing import Any, override
@@ -26,6 +28,8 @@ from scam_sniffer.data.api.stock.mapping import BinanceMappingKey, BinanceMappin
 from scam_sniffer.utils.datetime import ms_to_sec
 
 class BinanceStock(AbsStock):
+    """Read historical and live USD-M futures candles from Binance."""
+
     __WS_URL = "wss://fstream.binance.com/ws"
     __REST_URL = "https://fapi.binance.com"
     __WS_CONFIG = WsConfig(ws_url=__WS_URL)
@@ -59,9 +63,21 @@ class BinanceStock(AbsStock):
         max_attempts: int = 5,
         timeout_seconds: float = 15.0,
     ) -> None:
+        """Initialize a Binance Futures market-data source.
+
+        Args:
+            client: Optional preconfigured HTTP client used mainly for injection.
+            rest_url: Binance Futures REST base URL.
+            ws_config: Binance Futures WebSocket configuration.
+            max_attempts: Maximum number of HTTP attempts per request.
+            timeout_seconds: HTTP request timeout in seconds.
+
+        Raises:
+            StockError: If transport configuration or initialization fails.
+        """
         if timeout_seconds <= 0:
             api_error = ApiError(
-                reason=ApiErrorReason.INVALID_CONFIG,
+                reason=ApiErrorReason.CONF,
                 message="API request timeout must be positive",
                 operation="init",
             )
@@ -92,6 +108,21 @@ class BinanceStock(AbsStock):
         start_time: datetime,
         finish_time: datetime,
     ) -> list[CandleResponse]:
+        """Fetch Binance Futures candles inside a half-open time range.
+
+        Args:
+            symbol: Binance trading pair symbol.
+            k_limit: Maximum number of candles, between one and 1,500.
+            timeframe: Binance candle interval.
+            start_time: Inclusive timezone-aware range boundary.
+            finish_time: Exclusive timezone-aware range boundary.
+
+        Returns:
+            Parsed candles in Binance response order.
+
+        Raises:
+            StockError: If validation or remote retrieval fails.
+        """
         _validate_klines_request(
             limit=k_limit,
             start_time=start_time,
@@ -113,7 +144,7 @@ class BinanceStock(AbsStock):
                 },
             )
             return _rest_build_candles(
-                payload=payload,
+                rows=payload,
                 symbol=symbol,
                 timeframe=timeframe,
             )
@@ -131,6 +162,18 @@ class BinanceStock(AbsStock):
         symbol: str,
         timeframe: TimeframeResponse,
     ) -> AsyncIterator[CandleResponse]:
+        """Stream Binance Futures candle updates.
+
+        Args:
+            symbol: Binance trading pair symbol.
+            timeframe: Binance candle interval.
+
+        Yields:
+            Parsed candle snapshots in stream order.
+
+        Raises:
+            StockError: If the Binance WebSocket stream fails.
+        """
         stream_name = f"{symbol.lower()}@kline_{timeframe.value}"
         try:
             async for candle in self._api_client.ws_stream(
@@ -147,10 +190,20 @@ class BinanceStock(AbsStock):
             ) from error
 
 def _validate_klines_request(
-        limit: int,
-        start_time: datetime,
-        finish_time: datetime,
+    limit: int,
+    start_time: datetime,
+    finish_time: datetime,
 ) -> None:
+    """Validate Binance kline request boundaries and result limit.
+
+    Args:
+        limit: Maximum number of requested candles.
+        start_time: Inclusive range boundary.
+        finish_time: Exclusive range boundary.
+
+    Raises:
+        StockError: If the limit or time range is invalid.
+    """
     if not 1 <= limit <= 1500:
         raise StockError(
             reason=StockErrorReason.INVALID_LIMIT,
@@ -171,6 +224,17 @@ def _validate_klines_request(
         )
 
 def _ws_build_candle(event: dict[str, Any]) -> CandleResponse:
+    """Build a candle response from a Binance WebSocket event.
+
+    Args:
+        event: Decoded Binance WebSocket event.
+
+    Returns:
+        Validated candle transport model.
+
+    Raises:
+        ApiError: If the event shape or a field value is invalid.
+    """
     try:
         if event.get("e") != "kline":
             raise ValueError("Event is not a Binance kline event")
@@ -203,41 +267,26 @@ def _ws_build_candle(event: dict[str, Any]) -> CandleResponse:
         )
     except (KeyError, TypeError, ValueError, InvalidOperation) as error:
         raise ApiError(
-            reason=ApiErrorReason.INVALID_RESPONSE,
+            reason=ApiErrorReason.NEGOTIATION,
             message="Binance returned an invalid kline event",
             operation="stream_klines",
         ) from error
 
-def _rest_build_candles(
-    payload: Any,
-    symbol: str,
-    timeframe: TimeframeResponse,
-) -> list[CandleResponse]:
-    try:
-        if not isinstance(payload, list):
-            raise TypeError("Binance returned a non-list kline response")
-
-        current_time = datetime.now(tz=UTC)
-        return [
-            replace(
-                _rest_build_candle(row=row, symbol=symbol, timeframe=timeframe),
-                is_closed=_rest_close_datetime(row) <= current_time,
-            )
-            for row in payload
-        ]
-    except (KeyError, TypeError, ValueError, InvalidOperation) as error:
-        raise ApiError(
-            reason=ApiErrorReason.INVALID_RESPONSE,
-            message="Binance returned an invalid kline payload",
-            operation="get_klines",
-        ) from error
-
 def _rest_build_candle(
     row: list[Any],
-    *,
     symbol: str,
     timeframe: TimeframeResponse,
 ) -> CandleResponse:
+    """Build one candle response from a Binance REST row.
+
+    Args:
+        row: Positional Binance kline values.
+        symbol: Requested Binance trading pair symbol.
+        timeframe: Requested Binance candle interval.
+
+    Returns:
+        Validated candle transport model.
+    """
     close_time = _rest_close_datetime(row)
     return CandleResponse(
         market=MarketDto.BINANCE,
@@ -260,7 +309,55 @@ def _rest_build_candle(
         volume_quote=Decimal(str(row[BinanceMappingIndex.VOLUME_QUOTE])),
     )
 
+def _rest_build_candles(
+    rows: Any,
+    symbol: str,
+    timeframe: TimeframeResponse,
+) -> list[CandleResponse]:
+    """Build candle responses from a Binance REST payload.
+
+    Args:
+        rows: Decoded Binance kline response.
+        symbol: Requested Binance trading pair symbol.
+        timeframe: Requested Binance candle interval.
+
+    Returns:
+        Validated candles in response order.
+
+    Raises:
+        ApiError: If the payload shape or a field value is invalid.
+    """
+    try:
+        if not isinstance(rows, list):
+            raise TypeError("Binance returned a non-list kline response")
+
+        current_time = datetime.now(tz=UTC)
+        return [
+            replace(
+                _rest_build_candle(row=row, symbol=symbol, timeframe=timeframe),
+                is_closed=_rest_close_datetime(row) <= current_time,
+            )
+            for row in rows
+        ]
+    except (KeyError, TypeError, ValueError, InvalidOperation) as error:
+        raise ApiError(
+            reason=ApiErrorReason.NEGOTIATION,
+            message="Binance returned an invalid kline payload",
+            operation="get_klines",
+        ) from error
+
 def _rest_close_datetime(row: list[Any]) -> datetime:
+    """Convert a Binance REST row close time to an exclusive UTC boundary.
+
+    Args:
+        row: Positional Binance kline values.
+
+    Returns:
+        Exclusive timezone-aware candle close boundary.
+
+    Raises:
+        ValueError: If the row contains too few fields.
+    """
     if len(row) < 11:
         raise ValueError(f"Expected at least 11 kline fields, received {len(row)}")
     return datetime.fromtimestamp(

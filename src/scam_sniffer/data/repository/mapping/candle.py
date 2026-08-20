@@ -1,8 +1,21 @@
+"""Mappings among candle transport, domain, and persistence models."""
+
 from scam_sniffer.data.api.stock.models import CandleResponse
 from scam_sniffer.data.database.entities import CandleEntity
 from scam_sniffer.domain.models import Candle, Market, Timeframe
 
 def dto_to_candle(response: CandleResponse) -> Candle:
+    """Convert a remote candle response to a domain candle.
+
+    Args:
+        response: Validated exchange transport model.
+
+    Returns:
+        Exchange-independent domain candle.
+
+    Raises:
+        ValueError: If a transport value violates the domain model.
+    """
     return Candle(
         market=Market(response.market.value),
         symbol=response.symbol,
@@ -21,6 +34,17 @@ def dto_to_candle(response: CandleResponse) -> Candle:
     )
 
 def entity_to_candle(entity: CandleEntity) -> Candle:
+    """Convert a persisted candle entity to a domain candle.
+
+    Args:
+        entity: Candle row read from storage.
+
+    Returns:
+        Exchange-independent domain candle.
+
+    Raises:
+        ValueError: If a persisted value violates the domain model.
+    """
     return Candle(
         market=Market(entity.market),
         symbol=entity.symbol,
@@ -39,6 +63,14 @@ def entity_to_candle(entity: CandleEntity) -> Candle:
     )
 
 def candle_to_entity(candle: Candle) -> CandleEntity:
+    """Convert a domain candle to a persistence entity.
+
+    Args:
+        candle: Validated exchange-independent candle.
+
+    Returns:
+        Database-compatible candle entity.
+    """
     return CandleEntity(
         market=candle.market.value,
         symbol=candle.symbol,

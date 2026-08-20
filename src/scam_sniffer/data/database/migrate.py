@@ -1,3 +1,5 @@
+"""Command-line entry point for applying database migrations."""
+
 from __future__ import annotations
 
 import os
@@ -9,6 +11,7 @@ _DATABASE_URL = "postgresql://scam_sniffer:scam_sniffer@localhost:5432/scam_snif
 _DATABASE_URL_KEY = "SCAM_SNIFFER_DATABASE_URL"
 
 async def migrate() -> None:
+    """Connect to PostgreSQL and apply all pending migrations."""
     config = DatabaseConfig(dsn=os.environ.get(_DATABASE_URL_KEY, _DATABASE_URL))
     engine = DatabaseEngine(config=config)
     try:
@@ -18,6 +21,7 @@ async def migrate() -> None:
         await engine.close()
 
 def main() -> None:
+    """Run the asynchronous migration entry point."""
     asyncio.run(migrate())
 
 if __name__ == "__main__":
