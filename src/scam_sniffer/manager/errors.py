@@ -34,6 +34,7 @@ class ManagerError(ScamError):
 class ManagerErrorReason(StrEnum):
     """Categorize failures produced by application managers."""
 
-    CONF = "conf"
     REPO = "repo"
+    PARAMS = "params"
+    LIFECYCLE = "lifecycle"
     CONTINUITY = "continuity"

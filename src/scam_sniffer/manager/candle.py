@@ -2,43 +2,44 @@
 
 from __future__ import annotations
 
-from itertools import pairwise
 from datetime import UTC, datetime
-from collections.abc import Callable
+from itertools import pairwise
+from collections.abc import Awaitable, Callable
 
-from scam_sniffer.domain.errors import DomainError
+import asyncio
+
+from scam_sniffer.domain.errors import DomainError, DomainErrorReason
 from scam_sniffer.domain.models import Candle, Market, Timeframe
 from scam_sniffer.domain.repository.candle import CandleRepository
 
 from scam_sniffer.manager.errors import ManagerError, ManagerErrorReason
+from scam_sniffer.manager.config import CandleManagerConfig
 
 from scam_sniffer.utils.datetime import now_utc
 
 class CandleManager:
-    """Coordinate bounded historical candle synchronization workflows."""
-
-    __BATCH_SIZE = 1_500
-    __BACKFILL_SIZE = 10_000
+    """Coordinate historical candle synchronization and live streams."""
 
     def __init__(
         self,
+        config: CandleManagerConfig,
         repository: CandleRepository,
-        batch_size: int = __BATCH_SIZE,
-        backfill_size: int = __BACKFILL_SIZE,
         time_provider: Callable[[], datetime] | None = None,
+        sleep_provider: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
-        """Initialize the manager with a repository and clock.
+        """Initialize the manager with its dependencies and synchronization limits.
 
         Args:
+            config: Synchronization limits and stream reconnect delays.
             repository: Domain repository used for synchronization and reads.
-            batch_size: Number of candles to fetch.
-            backfill_size: Number of candles to synchronize when a series is empty.
             time_provider: Optional timezone-aware clock for deterministic execution.
+            sleep_provider: Optional asynchronous delay provider for reconnects.
         """
+        self._config = config
         self._repository = repository
-        self._batch_size = batch_size
-        self._backfill_size = backfill_size
         self._time_provider = time_provider or now_utc
+        self._sleep_provider = sleep_provider or asyncio.sleep
+        self._stream_async_tasks: dict[tuple[str, Timeframe], asyncio.Task[None]] = {}
 
     async def backfill(
         self,
@@ -73,7 +74,7 @@ class CandleManager:
             timeframe=timeframe,
             operation="backfill",
         )
-        start_time = end_time - timeframe.duration * self._backfill_size
+        start_time = end_time - timeframe.duration * self._config.backfill_size
         return await self.__time_range_sync(
             symbol=symbol,
             timeframe=timeframe,
@@ -153,7 +154,7 @@ class CandleManager:
             return 0
 
         end_time = candle.open_time + timeframe.duration
-        start_time = end_time - timeframe.duration * self._backfill_size
+        start_time = end_time - timeframe.duration * self._config.backfill_size
 
         candles = await self.__get_cc_range(
             market=market,
@@ -177,7 +178,7 @@ class CandleManager:
             )
         return sync_count
 
-    async def tail_gap_recovery(
+    async def tail_gap_sync(
         self,
         market: Market,
         symbol: str,
@@ -200,7 +201,7 @@ class CandleManager:
             market=market,
             symbol=symbol,
             timeframe=timeframe,
-            operation="tail_gap_recovery",
+            operation="tail_gap_sync",
         )
         if candle is None:
             return 0
@@ -208,7 +209,7 @@ class CandleManager:
         end_time = _cc_finish_time(
             curr_time=self._time_provider(),
             timeframe=timeframe,
-            operation="tail_gap_recovery",
+            operation="tail_gap_sync",
         )
         start_time = candle.open_time + timeframe.duration
 
@@ -218,6 +219,92 @@ class CandleManager:
             start_time=start_time,
             finish_time=end_time,
         )
+
+    def start_stream_task(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+    ) -> asyncio.Task[None]:
+        """Start or reuse a managed candle stream task.
+
+        Args:
+            symbol: Exchange trading pair symbol.
+            timeframe: Domain candle interval.
+
+        Returns:
+            Active task that owns the stream and its reconnect lifecycle.
+
+        Raises:
+            ManagerError: If the symbol is empty or no event loop is running.
+        """
+        symbol = symbol.upper().strip()
+        if not symbol:
+            raise ManagerError(
+                reason=ManagerErrorReason.PARAMS,
+                message="Candle stream symbol cannot be empty",
+                operation="start_stream_task",
+            )
+
+        stream_key = (symbol, timeframe)
+        stream_task = self._stream_async_tasks.get(stream_key)
+        if stream_task is not None:
+            if not stream_task.done():
+                return stream_task
+            if not stream_task.cancelled():
+                task_error = stream_task.exception()
+                if isinstance(task_error, ManagerError):
+                    raise task_error
+                if isinstance(task_error, Exception):
+                    raise ManagerError(
+                        reason=ManagerErrorReason.LIFECYCLE,
+                        message="Candle stream task failed",
+                        operation="start_stream_task",
+                        root_cause=task_error,
+                    ) from task_error
+            self._stream_async_tasks.pop(stream_key)
+
+        try:
+            event_loop = asyncio.get_running_loop()
+        except RuntimeError as error:
+            raise ManagerError(
+                reason=ManagerErrorReason.LIFECYCLE,
+                message="Candle stream requires a running event loop",
+                operation="start_stream_task",
+                root_cause=error,
+            ) from error
+
+        stream_task = event_loop.create_task(
+            coro=self.__streaming_loop(symbol=symbol, timeframe=timeframe),
+            name=f"candle_stream:{symbol}:{timeframe.value}",
+        )
+        self._stream_async_tasks[stream_key] = stream_task
+        return stream_task
+
+    async def gather_stream_tasks(self) -> None:
+        """Cancel and await every managed candle stream.
+
+        Raises:
+            ManagerError: If a stream task failed before shutdown.
+        """
+        tasks = list(self._stream_async_tasks.values())
+        self._stream_async_tasks.clear()
+
+        for task in tasks:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if result is None or isinstance(result, asyncio.CancelledError):
+                continue
+            if isinstance(result, ManagerError):
+                raise result
+            if isinstance(result, Exception):
+                raise ManagerError(
+                    reason=ManagerErrorReason.LIFECYCLE,
+                    message="Candle stream gather failed",
+                    operation="gather_stream_tasks",
+                    root_cause=result,
+                ) from result
 
     async def __get_last_cc(
         self,
@@ -317,7 +404,7 @@ class CandleManager:
         sync_count = 0
         while start_time + timeframe.duration <= finish_time:
             batch_size = min(
-                self._batch_size,
+                self._config.batch_size,
                 int((finish_time - start_time) // timeframe.duration),
             )
             batch_time = start_time + timeframe.duration * batch_size
@@ -332,6 +419,71 @@ class CandleManager:
             sync_count += len(candles)
             start_time = batch_time
         return sync_count
+
+    async def __streaming_loop(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+    ) -> None:
+        """Consume a persisted stream, recover gaps, and reconnect remote failures.
+
+        Args:
+            symbol: Exchange trading pair symbol.
+            timeframe: Domain candle interval.
+
+        Raises:
+            ManagerError: If mapping or storage fails while consuming the stream.
+        """
+        last_candle: Candle | None = None
+        retry_delay = self._config.stream_retry_delay
+        while True:
+            has_updates = False
+            try:
+                async for candle in self._repository.stream_candles(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                ):
+                    if last_candle is not None and candle.open_time > last_candle.open_time:
+                        start_time = (
+                            last_candle.open_time + timeframe.duration
+                            if last_candle.is_closed
+                            else last_candle.open_time
+                        )
+                        if start_time < candle.open_time:
+                            await self.__time_range_sync(
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                start_time=start_time,
+                                finish_time=candle.open_time,
+                            )
+
+                    is_newer = last_candle is None or candle.open_time > last_candle.open_time
+                    is_closing = (
+                        last_candle is not None
+                        and candle.open_time == last_candle.open_time
+                        and candle.is_closed
+                    )
+                    if is_newer or is_closing:
+                        last_candle = candle
+                    has_updates = True
+                    retry_delay = self._config.stream_retry_delay
+            except asyncio.CancelledError:
+                raise
+            except DomainError as error:
+                if error.reason is not DomainErrorReason.REMOTE:
+                    raise ManagerError(
+                        reason=ManagerErrorReason.REPO,
+                        message="Candle stream synchronization failed",
+                        operation="streaming_loop",
+                        root_cause=error,
+                    ) from error
+
+            await self._sleep_provider(retry_delay)
+            if not has_updates:
+                retry_delay = min(
+                    self._config.stream_retry_max_delay,
+                    retry_delay * 2,
+                )
 
 def _cc_range_gaps(
     candles: list[Candle],
@@ -385,7 +537,7 @@ def _cc_finish_time(
     """
     if curr_time.tzinfo is None:
         raise ManagerError(
-            reason=ManagerErrorReason.CONF,
+            reason=ManagerErrorReason.PARAMS,
             message="Candle manager time must be timezone-aware",
             operation=operation,
         )

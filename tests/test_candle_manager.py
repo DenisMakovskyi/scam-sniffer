@@ -1,10 +1,14 @@
+import asyncio
+
 from typing import cast
 from decimal import Decimal
 from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
 
 from scam_sniffer.manager.candle import CandleManager
+from scam_sniffer.manager.config import CandleManagerConfig
 from scam_sniffer.domain.models import Candle, Market, Timeframe
 from scam_sniffer.domain.repository.candle import CandleRepository
 from scam_sniffer.domain.errors import DomainError, DomainErrorReason
@@ -19,16 +23,20 @@ class FakeCandleRepository:
         range_error: DomainError | None = None,
         fill_batches: bool = False,
         latest_candle: Candle | None = None,
+        stream_outcomes: list[DomainError | list[Candle] | None] | None = None,
         selected_candles: list[Candle] | None = None,
     ) -> None:
         self.error = error
         self.range_error = range_error
         self.fill_batches = fill_batches
         self.latest_candle = latest_candle
+        self.stream_event = asyncio.Event()
+        self.stream_outcomes = list(stream_outcomes or [None])
         self.selected_candles = selected_candles or []
         self.calls: list[tuple[str, int, Timeframe, datetime, datetime]] = []
         self.range_calls: list[tuple[Market, str, Timeframe, datetime, datetime]] = []
         self.latest_calls: list[tuple[Market, str, Timeframe]] = []
+        self.stream_calls: list[tuple[str, Timeframe]] = []
 
     async def fetch_candles(
         self,
@@ -42,6 +50,22 @@ class FakeCandleRepository:
         if self.error is not None:
             raise self.error
         return [_candle()] * k_limit if self.fill_batches else []
+
+    async def stream_candles(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+    ) -> AsyncIterator[Candle]:
+        self.stream_calls.append((symbol, timeframe))
+        outcome = self.stream_outcomes.pop(0) if self.stream_outcomes else None
+
+        if isinstance(outcome, DomainError):
+            raise outcome
+        if outcome is None:
+            await self.stream_event.wait()
+            return
+        for candle in outcome:
+            yield candle
 
     async def select_candles(
         self,
@@ -66,6 +90,18 @@ class FakeCandleRepository:
         if self.error is not None:
             raise self.error
         return self.latest_candle
+
+def test_candle_manager_config_rejects_invalid_values() -> None:
+    with pytest.raises(ValueError):
+        CandleManagerConfig(batch_size=0)
+    with pytest.raises(ValueError):
+        CandleManagerConfig(batch_size=1_501)
+    with pytest.raises(ValueError):
+        CandleManagerConfig(backfill_size=0)
+    with pytest.raises(ValueError):
+        CandleManagerConfig(stream_retry_delay=0)
+    with pytest.raises(ValueError):
+        CandleManagerConfig(stream_retry_delay=2, stream_retry_max_delay=1)
 
 @pytest.mark.asyncio
 async def test_batch_sync_delegates_to_repository() -> None:
@@ -140,7 +176,7 @@ async def test_tail_gap_recovery_skips_complete_and_empty_series(
     repository = FakeCandleRepository(latest_candle=latest_candle)
     manager = _manager(repository)
 
-    synchronized_count = await manager.tail_gap_recovery(
+    synchronized_count = await manager.tail_gap_sync(
         market=Market.BINANCE,
         symbol="BTCUSDT",
         timeframe=Timeframe.M5,
@@ -183,6 +219,23 @@ async def test_initial_backfill_requests_ten_thousand_closed_candles(
             strict=False,
         )
     )
+
+@pytest.mark.asyncio
+async def test_backfill_uses_manager_config_limits() -> None:
+    repository = FakeCandleRepository(fill_batches=True)
+    manager = _manager(
+        repository=repository,
+        manager_config=CandleManagerConfig(batch_size=2, backfill_size=5),
+    )
+
+    synchronized_count = await manager.backfill(
+        market=Market.BINANCE,
+        symbol="BTCUSDT",
+        timeframe=Timeframe.M5,
+    )
+
+    assert synchronized_count == 5
+    assert [call[1] for call in repository.calls] == [2, 2, 1]
 
 @pytest.mark.asyncio
 async def test_continuity_audit_skips_empty_series() -> None:
@@ -253,7 +306,7 @@ async def test_continuity_audit_absorbs_range_failure() -> None:
 
     error = error_info.value
     assert error.reason is ManagerErrorReason.REPO
-    assert error.operation == "continuity_audit"
+    assert error.operation == "batch_audit"
     assert error.root_cause is repository_error
     assert error.__cause__ is repository_error
 
@@ -336,8 +389,172 @@ async def test_continuity_audit_rejects_misaligned_sequence() -> None:
 
     error = error_info.value
     assert error.reason is ManagerErrorReason.CONTINUITY
-    assert error.operation == "continuity_audit"
+    assert error.operation == "batch_audit"
     assert repository.calls == []
+
+def test_start_stream_rejects_empty_symbol() -> None:
+    manager = _manager(FakeCandleRepository())
+
+    with pytest.raises(ManagerError) as error_info:
+        manager.start_stream_task(symbol=" ", timeframe=Timeframe.M5)
+
+    error = error_info.value
+    assert error.reason is ManagerErrorReason.PARAMS
+    assert error.operation == "start_stream_task"
+
+def test_start_stream_requires_running_event_loop() -> None:
+    manager = _manager(FakeCandleRepository())
+
+    with pytest.raises(ManagerError) as error_info:
+        manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
+
+    error = error_info.value
+    assert error.reason is ManagerErrorReason.LIFECYCLE
+    assert error.operation == "start_stream_task"
+    assert isinstance(error.root_cause, RuntimeError)
+
+@pytest.mark.asyncio
+async def test_start_stream_reuses_and_stops_active_tasks() -> None:
+    repository = FakeCandleRepository(stream_outcomes=[None, None])
+    manager = _manager(repository)
+
+    first_task = manager.start_stream_task(symbol="btcusdt", timeframe=Timeframe.M5)
+    reused_task = manager.start_stream_task(symbol=" BTCUSDT ", timeframe=Timeframe.M5)
+    second_task = manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M15)
+    await _wait_for_stream_calls(repository=repository, expected_count=2)
+
+    assert first_task is reused_task
+    assert first_task is not second_task
+    assert repository.stream_calls == [
+        ("BTCUSDT", Timeframe.M5),
+        ("BTCUSDT", Timeframe.M15),
+    ]
+
+    await manager.gather_stream_tasks()
+
+    assert first_task.cancelled()
+    assert second_task.cancelled()
+
+@pytest.mark.asyncio
+async def test_stream_reconnect_uses_bounded_backoff() -> None:
+    retry_delays: list[float] = []
+    remote_error = DomainError(
+        reason=DomainErrorReason.REMOTE,
+        message="Candle remote stream failed",
+        operation="stream_candles",
+    )
+
+    async def sleep_provider(delay: float) -> None:
+        retry_delays.append(delay)
+
+    repository = FakeCandleRepository(
+        stream_outcomes=[remote_error] * 6 + [None],
+    )
+    manager = _manager(repository=repository, sleep_provider=sleep_provider)
+
+    manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
+    await _wait_for_stream_calls(repository=repository, expected_count=7)
+
+    assert retry_delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0]
+
+    await manager.gather_stream_tasks()
+
+@pytest.mark.asyncio
+async def test_stream_reconnect_resets_backoff_after_update() -> None:
+    retry_delays: list[float] = []
+    remote_error = DomainError(
+        reason=DomainErrorReason.REMOTE,
+        message="Candle remote stream failed",
+        operation="stream_candles",
+    )
+
+    async def sleep_provider(delay: float) -> None:
+        retry_delays.append(delay)
+
+    repository = FakeCandleRepository(
+        stream_outcomes=[remote_error, [_candle()], remote_error, None],
+    )
+    manager = _manager(repository=repository, sleep_provider=sleep_provider)
+
+    manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
+    await _wait_for_stream_calls(repository=repository, expected_count=4)
+
+    assert retry_delays == [1.0, 1.0, 1.0]
+
+    await manager.gather_stream_tasks()
+
+@pytest.mark.parametrize(
+    ("is_closed", "expected_count"),
+    [(True, 2), (False, 3)],
+)
+@pytest.mark.asyncio
+async def test_stream_reconnect_recovers_missed_candles(
+    is_closed: bool,
+    expected_count: int,
+) -> None:
+    start_time = datetime(2025, 1, 1, tzinfo=UTC)
+    retry_delays: list[float] = []
+
+    async def sleep_provider(delay: float) -> None:
+        retry_delays.append(delay)
+
+    repository = FakeCandleRepository(
+        fill_batches=True,
+        stream_outcomes=[
+            [_candle(open_time=start_time, is_closed=is_closed)],
+            [_candle(open_time=start_time + Timeframe.M5.duration * 3)],
+            None,
+        ],
+    )
+    manager = _manager(repository=repository, sleep_provider=sleep_provider)
+
+    manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
+    await _wait_for_stream_calls(repository=repository, expected_count=3)
+
+    expected_start_time = (
+        start_time + Timeframe.M5.duration
+        if is_closed
+        else start_time
+    )
+    assert repository.calls == [
+        (
+            "BTCUSDT",
+            expected_count,
+            Timeframe.M5,
+            expected_start_time,
+            start_time + Timeframe.M5.duration * 3,
+        )
+    ]
+
+    await manager.gather_stream_tasks()
+
+@pytest.mark.parametrize(
+    "reason",
+    [DomainErrorReason.MAPPING, DomainErrorReason.STORAGE],
+)
+@pytest.mark.asyncio
+async def test_stream_lifecycle_rejects_non_remote_failure(
+    reason: DomainErrorReason,
+) -> None:
+    repository_error = DomainError(
+        reason=reason,
+        message="Candle stream processing failed",
+        operation="stream_candles",
+    )
+    repository = FakeCandleRepository(stream_outcomes=[repository_error])
+    manager = _manager(repository)
+
+    stream_task = manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
+    await asyncio.wait({stream_task})
+
+    with pytest.raises(ManagerError) as error_info:
+        await manager.gather_stream_tasks()
+
+    error = error_info.value
+    assert error.reason is ManagerErrorReason.REPO
+    assert error.operation == "streaming_loop"
+    assert error.root_cause is repository_error
+    assert error.__cause__ is repository_error
 
 @pytest.mark.asyncio
 async def test_tail_gap_recovery_absorbs_repository_failure() -> None:
@@ -351,7 +568,7 @@ async def test_tail_gap_recovery_absorbs_repository_failure() -> None:
     manager = _manager(FakeCandleRepository(error=repository_error))
 
     with pytest.raises(ManagerError) as error_info:
-        await manager.tail_gap_recovery(
+        await manager.tail_gap_sync(
             market=Market.BINANCE,
             symbol="BTCUSDT",
             timeframe=Timeframe.M5,
@@ -359,7 +576,7 @@ async def test_tail_gap_recovery_absorbs_repository_failure() -> None:
 
     error = error_info.value
     assert error.reason is ManagerErrorReason.REPO
-    assert error.operation == "tail_gap_recovery"
+    assert error.operation == "tail_gap_sync"
     assert error.root_cause is repository_error
     assert error.__cause__ is repository_error
 
@@ -382,7 +599,7 @@ async def test_tail_gap_recovery_requests_only_missing_closed_candles(
     )
     manager = _manager(repository)
 
-    synchronized_count = await manager.tail_gap_recovery(
+    synchronized_count = await manager.tail_gap_sync(
         market=Market.BINANCE,
         symbol="BTCUSDT",
         timeframe=timeframe,
@@ -423,8 +640,24 @@ def _candle(
         volume_quote=Decimal("1250.0"),
     )
 
-def _manager(repository: FakeCandleRepository) -> CandleManager:
+async def _wait_for_stream_calls(
+    repository: FakeCandleRepository,
+    expected_count: int,
+) -> None:
+    for _ in range(100):
+        if len(repository.stream_calls) >= expected_count:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"Expected {expected_count} stream calls")
+
+def _manager(
+    repository: FakeCandleRepository,
+    manager_config: CandleManagerConfig | None = None,
+    sleep_provider: Callable[[float], Awaitable[None]] | None = None,
+) -> CandleManager:
     return CandleManager(
+        config=manager_config or CandleManagerConfig(),
         repository=cast(CandleRepository, repository),
         time_provider=lambda: _CURRENT_TIME,
+        sleep_provider=sleep_provider,
     )
