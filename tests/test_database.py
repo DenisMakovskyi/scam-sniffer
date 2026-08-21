@@ -24,7 +24,7 @@ from scam_sniffer.data.database.schema.candle import (
 
 _MIGRATION_PATH = (
     Path(__file__).parents[1]
-    / "src/scam_sniffer/data/database/migrations/0001_create_candles.sql"
+    / "src/scam_sniffer/data/database/migration/0001_create_candles.sql"
 )
 
 class FakePool:

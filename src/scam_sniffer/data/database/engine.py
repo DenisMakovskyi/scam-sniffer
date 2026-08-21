@@ -10,7 +10,7 @@ import asyncio
 import asyncpg
 
 from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
-from scam_sniffer.data.database.schema_cmn import (
+from scam_sniffer.data.database.schema.common import (
     MIGRATION_LOCK,
     MIGRATION_UNLOCK,
     MIGRATION_TABLE_CREATE,
@@ -18,7 +18,7 @@ from scam_sniffer.data.database.schema_cmn import (
     MIGRATION_VERSION_CREATE,
 )
 
-_MIGRATION_PATH = Path(__file__).with_name("migrations")
+_MIGRATION_PATH = Path(__file__).with_name("migration")
 
 @dataclass(frozen=True, slots=True)
 class DatabaseConfig:
@@ -62,7 +62,7 @@ class DatabaseConfig:
             )
 
 class DatabaseEngine:
-    """Own a PostgreSQL connection pool and apply versioned migrations."""
+    """Own a PostgreSQL connection pool and apply versioned migration."""
 
     def __init__(self, config: DatabaseConfig) -> None:
         """Initialize a disconnected database engine.
@@ -137,13 +137,13 @@ class DatabaseEngine:
         """Apply every pending SQL migration under an advisory lock.
 
         Raises:
-            DatabaseError: If migrations are missing or cannot be applied.
+            DatabaseError: If migration are missing or cannot be applied.
         """
         migrations = sorted(_MIGRATION_PATH.glob("*.sql"))
         if not migrations:
             raise DatabaseError(
                 reason=DatabaseErrorReason.MIGRATION,
-                message="Database migrations are missing",
+                message="Database migration are missing",
                 operation="migrate",
             )
 

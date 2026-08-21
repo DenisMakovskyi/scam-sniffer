@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from datetime import UTC, datetime
 from collections.abc import Callable
 
@@ -22,18 +23,65 @@ class CandleManager:
     def __init__(
         self,
         repository: CandleRepository,
+        batch_size: int = __BATCH_SIZE,
+        backfill_size: int = __BACKFILL_SIZE,
         time_provider: Callable[[], datetime] | None = None,
     ) -> None:
         """Initialize the manager with a repository and clock.
 
         Args:
             repository: Domain repository used for synchronization and reads.
+            batch_size: Number of candles to fetch.
+            backfill_size: Number of candles to synchronize when a series is empty.
             time_provider: Optional timezone-aware clock for deterministic execution.
         """
         self._repository = repository
+        self._batch_size = batch_size
+        self._backfill_size = backfill_size
         self._time_provider = time_provider or now_utc
 
-    async def batch_sync(
+    async def backfill(
+        self,
+        market: Market,
+        symbol: str,
+        timeframe: Timeframe,
+    ) -> int:
+        """Load n-closed candles when a local series is empty.
+
+        Args:
+            market: Market-data provider that owns the series.
+            symbol: Trading pair symbol.
+            timeframe: Domain candle interval.
+
+        Returns:
+            Number of synchronized candles, or zero when a closed candle exists.
+
+        Raises:
+            ManagerError: If the clock is invalid or repository access fails.
+        """
+        candle = await self.__get_last_cc(
+            market=market,
+            symbol=symbol,
+            timeframe=timeframe,
+            operation="backfill",
+        )
+        if candle is not None:
+            return 0
+
+        end_time = _cc_finish_time(
+            curr_time=self._time_provider(),
+            timeframe=timeframe,
+            operation="backfill",
+        )
+        start_time = end_time - timeframe.duration * self._backfill_size
+        return await self.__time_range_sync(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_time=start_time,
+            finish_time=end_time,
+        )
+
+    async def batch_fetch(
         self,
         symbol: str,
         k_limit: int,
@@ -68,17 +116,21 @@ class CandleManager:
             raise ManagerError(
                 reason=ManagerErrorReason.REPO,
                 message="Candle batch synchronization failed",
-                operation="batch_sync",
+                operation="batch_fetch",
                 root_cause=error,
             ) from error
 
-    async def initial_backfill(
+    async def batch_audit(
         self,
         market: Market,
         symbol: str,
         timeframe: Timeframe,
     ) -> int:
-        """Load 10,000 closed candles when a local series is empty.
+        """Find and synchronize internal gaps in recent closed candles.
+
+        The audit is bounded to the n-intervals ending after the latest
+        locally persisted closed candle. Only gaps bracketed by closed candles
+        are recovered; initial and tail gaps belong to their dedicated flows.
 
         Args:
             market: Market-data provider that owns the series.
@@ -86,32 +138,44 @@ class CandleManager:
             timeframe: Domain candle interval.
 
         Returns:
-            Number of synchronized candles, or zero when a closed candle exists.
+            Number of synchronized candles across all internal gaps.
 
         Raises:
-            ManagerError: If the clock is invalid or repository access fails.
+            ManagerError: If repository access fails or candle spacing is invalid.
         """
-        candle = await self.__latest_cc(
+        candle = await self.__get_last_cc(
             market=market,
             symbol=symbol,
             timeframe=timeframe,
-            operation="initial_backfill",
+            operation="batch_audit",
         )
-        if candle is not None:
+        if candle is None:
             return 0
 
-        end_time = _cc_finish_time(
-            curr_time=self._time_provider(),
-            timeframe=timeframe,
-            operation="initial_backfill",
-        )
-        start_time = end_time - timeframe.duration * self.__BACKFILL_SIZE
-        return await self.__range_sync(
+        end_time = candle.open_time + timeframe.duration
+        start_time = end_time - timeframe.duration * self._backfill_size
+
+        candles = await self.__get_cc_range(
+            market=market,
             symbol=symbol,
             timeframe=timeframe,
             start_time=start_time,
             finish_time=end_time,
         )
+        candles = [*candles, candle]
+
+        sync_count = 0
+        for gap_start_time, gap_finish_time in _cc_range_gaps(
+            candles=candles,
+            timeframe=timeframe,
+        ):
+            sync_count += await self.__time_range_sync(
+                symbol=symbol,
+                timeframe=timeframe,
+                start_time=gap_start_time,
+                finish_time=gap_finish_time,
+            )
+        return sync_count
 
     async def tail_gap_recovery(
         self,
@@ -132,7 +196,7 @@ class CandleManager:
         Raises:
             ManagerError: If the clock is invalid or repository access fails.
         """
-        candle = await self.__latest_cc(
+        candle = await self.__get_last_cc(
             market=market,
             symbol=symbol,
             timeframe=timeframe,
@@ -141,20 +205,21 @@ class CandleManager:
         if candle is None:
             return 0
 
-        start_time = candle.open_time + timeframe.duration
-        finish_time = _cc_finish_time(
+        end_time = _cc_finish_time(
             curr_time=self._time_provider(),
             timeframe=timeframe,
             operation="tail_gap_recovery",
         )
-        return await self.__range_sync(
+        start_time = candle.open_time + timeframe.duration
+
+        return await self.__time_range_sync(
             symbol=symbol,
             timeframe=timeframe,
             start_time=start_time,
-            finish_time=finish_time,
+            finish_time=end_time,
         )
 
-    async def __latest_cc(
+    async def __get_last_cc(
         self,
         market: Market,
         symbol: str,
@@ -189,7 +254,46 @@ class CandleManager:
                 root_cause=error,
             ) from error
 
-    async def __range_sync(
+    async def __get_cc_range(
+        self,
+        market: Market,
+        symbol: str,
+        timeframe: Timeframe,
+        start_time: datetime,
+        finish_time: datetime,
+    ) -> list[Candle]:
+        """Read a candle range and translate repository failures.
+
+        Args:
+            market: Market-data provider that owns the series.
+            symbol: Trading pair symbol.
+            timeframe: Domain candle interval.
+            start_time: Inclusive range boundary.
+            finish_time: Exclusive range boundary.
+
+        Returns:
+            Persisted candles ordered by open time.
+
+        Raises:
+            ManagerError: If the repository read fails.
+        """
+        try:
+            return await self._repository.select_candles(
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_time=start_time,
+                finish_time=finish_time,
+            )
+        except DomainError as error:
+            raise ManagerError(
+                reason=ManagerErrorReason.REPO,
+                message="Candle continuity range reading failed",
+                operation="batch_audit",
+                root_cause=error,
+            ) from error
+
+    async def __time_range_sync(
         self,
         symbol: str,
         timeframe: Timeframe,
@@ -213,12 +317,12 @@ class CandleManager:
         sync_count = 0
         while start_time + timeframe.duration <= finish_time:
             batch_size = min(
-                self.__BATCH_SIZE,
+                self._batch_size,
                 int((finish_time - start_time) // timeframe.duration),
             )
             batch_time = start_time + timeframe.duration * batch_size
 
-            candles = await self.batch_sync(
+            candles = await self.batch_fetch(
                 symbol=symbol,
                 k_limit=batch_size,
                 timeframe=timeframe,
@@ -228,6 +332,38 @@ class CandleManager:
             sync_count += len(candles)
             start_time = batch_time
         return sync_count
+
+def _cc_range_gaps(
+    candles: list[Candle],
+    timeframe: Timeframe,
+) -> list[tuple[datetime, datetime]]:
+    """Find internal missing ranges between finalized candles.
+
+    Args:
+        candles: Persisted candles from the bounded audit range.
+        timeframe: Expected candle interval.
+
+    Returns:
+        Half-open missing ranges ordered by start time.
+
+    Raises:
+        ManagerError: If adjacent candles are not aligned to the timeframe grid.
+    """
+    open_times = sorted({candle.open_time for candle in candles if candle.is_closed})
+    gap_ranges: list[tuple[datetime, datetime]] = []
+
+    for prev_time, curr_time in pairwise(open_times):
+        time_delta = curr_time - prev_time
+        if time_delta == timeframe.duration:
+            continue
+        if time_delta % timeframe.duration:
+            raise ManagerError(
+                reason=ManagerErrorReason.CONTINUITY,
+                message="Closed candles are not aligned to the timeframe grid",
+                operation="batch_audit",
+            )
+        gap_ranges.append((prev_time + timeframe.duration, curr_time))
+    return gap_ranges
 
 def _cc_finish_time(
     curr_time: datetime,

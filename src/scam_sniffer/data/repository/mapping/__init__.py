@@ -1,1 +1,0 @@
-"""Mappings between transport, domain, and persistence models."""

@@ -11,7 +11,7 @@ from scam_sniffer.data.api.stock.errors import StockError
 from scam_sniffer.data.api.stock.models import TimeframeResponse
 from scam_sniffer.data.database.errors import DatabaseError
 from scam_sniffer.data.database.dao.candle import CandleDao
-from scam_sniffer.data.repository.mapping.candle import (
+from scam_sniffer.data.mappings.candle import (
     dto_to_candle,
     entity_to_candle,
     candle_to_entity,

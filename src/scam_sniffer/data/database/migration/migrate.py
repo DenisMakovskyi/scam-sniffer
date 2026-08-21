@@ -1,4 +1,4 @@
-"""Command-line entry point for applying database migrations."""
+"""Command-line entry point for applying database migration."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ _DATABASE_URL = "postgresql://scam_sniffer:scam_sniffer@localhost:5432/scam_snif
 _DATABASE_URL_KEY = "SCAM_SNIFFER_DATABASE_URL"
 
 async def migrate() -> None:
-    """Connect to PostgreSQL and apply all pending migrations."""
+    """Connect to PostgreSQL and apply all pending migration."""
     config = DatabaseConfig(dsn=os.environ.get(_DATABASE_URL_KEY, _DATABASE_URL))
     engine = DatabaseEngine(config=config)
     try:

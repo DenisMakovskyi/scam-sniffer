@@ -36,3 +36,4 @@ class ManagerErrorReason(StrEnum):
 
     CONF = "conf"
     REPO = "repo"
+    CONTINUITY = "continuity"
