@@ -63,9 +63,11 @@ class FakeCandleDao:
         self,
         entities: list[CandleEntity] | None = None,
         error: DatabaseError | None = None,
+        is_persisted: bool = True,
     ) -> None:
         self.error = error
         self.entities = entities or []
+        self.is_persisted = is_persisted
         self.stored: list[CandleEntity] = []
 
     async def select_range(
@@ -93,6 +95,8 @@ class FakeCandleDao:
     async def upsert_one(self, entity: CandleEntity) -> bool:
         if self.error is not None:
             raise self.error
+        if not self.is_persisted:
+            return False
         self.stored.append(entity)
         return True
 
@@ -157,6 +161,23 @@ async def test_stream_candles_persists_every_update() -> None:
 
     assert candles == [_candle()]
     assert dao.stored == [_entity()]
+
+@pytest.mark.asyncio
+async def test_stream_candles_skips_unpersisted_update() -> None:
+    stock = FakeStock(responses=[_response(source=TransportDto.WS)])
+    dao = FakeCandleDao(is_persisted=False)
+    repository = _repository(stock=stock, dao=dao)
+
+    candles = [
+        candle
+        async for candle in repository.stream_candles(
+            symbol="BTCUSDT",
+            timeframe=Timeframe.M5,
+        )
+    ]
+
+    assert candles == []
+    assert dao.stored == []
 
 @pytest.mark.asyncio
 async def test_fetch_candles_absorbs_stock_error() -> None:

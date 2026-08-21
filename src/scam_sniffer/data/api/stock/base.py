@@ -49,7 +49,6 @@ class AbsStock(ABC):
                 reason=StockErrorReason.API_ERROR,
                 message="Stock API client init failed",
                 operation="init",
-                root_cause=error,
             ) from error
 
     async def close(self) -> None:
@@ -65,7 +64,6 @@ class AbsStock(ABC):
                 reason=StockErrorReason.API_ERROR,
                 message="Stock API client shutdown failed",
                 operation="close",
-                root_cause=error,
             ) from error
 
     @abstractmethod

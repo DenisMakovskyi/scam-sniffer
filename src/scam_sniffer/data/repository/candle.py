@@ -140,8 +140,9 @@ class CandleRepositoryImpl(CandleRepository):
                 timeframe=TimeframeResponse(timeframe.value),
             ):
                 candle = dto_to_candle(response)
-                await self._dao.upsert_one(candle_to_entity(candle))
-                yield candle
+                is_persisted = await self._dao.upsert_one(candle_to_entity(candle))
+                if is_persisted:
+                    yield candle
         except StockError as error:
             raise DomainError(
                 reason=DomainErrorReason.REMOTE,

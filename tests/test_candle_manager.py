@@ -7,12 +7,22 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
 
-from scam_sniffer.manager.candle import CandleManager
-from scam_sniffer.manager.config import CandleManagerConfig
+from scam_sniffer.domain.manager.candle import CandleManager
+from scam_sniffer.domain.manager.config import CandleManagerConfig
+from scam_sniffer.domain.manager.events import (
+    CandleClosed,
+    CandleEvent,
+    CandlesSynchronized,
+)
 from scam_sniffer.domain.models import Candle, Market, Timeframe
+from scam_sniffer.domain.events.bus import EventPublisher
 from scam_sniffer.domain.repository.candle import CandleRepository
-from scam_sniffer.domain.errors import DomainError, DomainErrorReason
-from scam_sniffer.manager.errors import ManagerError, ManagerErrorReason
+from scam_sniffer.domain.errors import (
+    DomainError,
+    ManagerError,
+    DomainErrorReason,
+    ManagerErrorReason
+)
 
 _CURRENT_TIME = datetime(2025, 1, 1, 12, 3, tzinfo=UTC)
 
@@ -91,6 +101,16 @@ class FakeCandleRepository:
             raise self.error
         return self.latest_candle
 
+class FakeEventPublisher:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.events: list[CandleEvent] = []
+
+    async def publish(self, event: CandleEvent) -> None:
+        if self.error is not None:
+            raise self.error
+        self.events.append(event)
+
 def test_candle_manager_config_rejects_invalid_values() -> None:
     with pytest.raises(ValueError):
         CandleManagerConfig(batch_size=0)
@@ -144,7 +164,7 @@ async def test_batch_sync_absorbs_repository_error() -> None:
         )
 
     error = error_info.value
-    assert error.reason is ManagerErrorReason.REPO
+    assert error.reason is ManagerErrorReason.REPOSITORY
     assert error.root_cause is repository_error
     assert error.__cause__ is repository_error
 
@@ -223,9 +243,11 @@ async def test_initial_backfill_requests_ten_thousand_closed_candles(
 @pytest.mark.asyncio
 async def test_backfill_uses_manager_config_limits() -> None:
     repository = FakeCandleRepository(fill_batches=True)
+    event_publisher = FakeEventPublisher()
     manager = _manager(
         repository=repository,
         manager_config=CandleManagerConfig(batch_size=2, backfill_size=5),
+        event_publisher=event_publisher,
     )
 
     synchronized_count = await manager.backfill(
@@ -236,6 +258,40 @@ async def test_backfill_uses_manager_config_limits() -> None:
 
     assert synchronized_count == 5
     assert [call[1] for call in repository.calls] == [2, 2, 1]
+    assert event_publisher.events == [
+        CandlesSynchronized(
+            market=Market.BINANCE,
+            symbol="BTCUSDT",
+            timeframe=Timeframe.M5,
+            start_time=datetime(2025, 1, 1, 11, 35, tzinfo=UTC),
+            finish_time=datetime(2025, 1, 1, 12, tzinfo=UTC),
+            synchronized_count=5,
+        )
+    ]
+
+@pytest.mark.asyncio
+async def test_backfill_absorbs_event_publication_failure_after_sync() -> None:
+    publish_error = RuntimeError("Event publication failed")
+    repository = FakeCandleRepository(fill_batches=True)
+    manager = _manager(
+        repository=repository,
+        manager_config=CandleManagerConfig(batch_size=2, backfill_size=2),
+        event_publisher=FakeEventPublisher(error=publish_error),
+    )
+
+    with pytest.raises(ManagerError) as error_info:
+        await manager.backfill(
+            market=Market.BINANCE,
+            symbol="BTCUSDT",
+            timeframe=Timeframe.M5,
+        )
+
+    error = error_info.value
+    assert len(repository.calls) == 1
+    assert error.reason is ManagerErrorReason.PUBLISHER
+    assert error.operation == "backfill"
+    assert error.root_cause is publish_error
+    assert error.__cause__ is publish_error
 
 @pytest.mark.asyncio
 async def test_continuity_audit_skips_empty_series() -> None:
@@ -305,7 +361,7 @@ async def test_continuity_audit_absorbs_range_failure() -> None:
         )
 
     error = error_info.value
-    assert error.reason is ManagerErrorReason.REPO
+    assert error.reason is ManagerErrorReason.REPOSITORY
     assert error.operation == "batch_audit"
     assert error.root_cause is repository_error
     assert error.__cause__ is repository_error
@@ -483,6 +539,31 @@ async def test_stream_reconnect_resets_backoff_after_update() -> None:
 
     await manager.gather_stream_tasks()
 
+@pytest.mark.parametrize("is_closed", [False, True])
+@pytest.mark.asyncio
+async def test_stream_publishes_only_closed_persisted_candles(
+    is_closed: bool,
+) -> None:
+    async def sleep_provider(_: float) -> None:
+        await asyncio.sleep(0)
+
+    candle = _candle(is_closed=is_closed)
+    repository = FakeCandleRepository(stream_outcomes=[[candle], None])
+    event_publisher = FakeEventPublisher()
+    manager = _manager(
+        repository=repository,
+        sleep_provider=sleep_provider,
+        event_publisher=event_publisher,
+    )
+
+    manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
+    await _wait_for_stream_calls(repository=repository, expected_count=2)
+
+    expected_events = [CandleClosed(candle=candle)] if is_closed else []
+    assert event_publisher.events == expected_events
+
+    await manager.gather_stream_tasks()
+
 @pytest.mark.parametrize(
     ("is_closed", "expected_count"),
     [(True, 2), (False, 3)],
@@ -506,7 +587,12 @@ async def test_stream_reconnect_recovers_missed_candles(
             None,
         ],
     )
-    manager = _manager(repository=repository, sleep_provider=sleep_provider)
+    event_publisher = FakeEventPublisher()
+    manager = _manager(
+        repository=repository,
+        sleep_provider=sleep_provider,
+        event_publisher=event_publisher,
+    )
 
     manager.start_stream_task(symbol="BTCUSDT", timeframe=Timeframe.M5)
     await _wait_for_stream_calls(repository=repository, expected_count=3)
@@ -523,6 +609,21 @@ async def test_stream_reconnect_recovers_missed_candles(
             Timeframe.M5,
             expected_start_time,
             start_time + Timeframe.M5.duration * 3,
+        )
+    ]
+    synchronized_events = [
+        event
+        for event in event_publisher.events
+        if isinstance(event, CandlesSynchronized)
+    ]
+    assert synchronized_events == [
+        CandlesSynchronized(
+            market=Market.BINANCE,
+            symbol="BTCUSDT",
+            timeframe=Timeframe.M5,
+            start_time=expected_start_time,
+            finish_time=start_time + Timeframe.M5.duration * 3,
+            synchronized_count=expected_count,
         )
     ]
 
@@ -551,7 +652,7 @@ async def test_stream_lifecycle_rejects_non_remote_failure(
         await manager.gather_stream_tasks()
 
     error = error_info.value
-    assert error.reason is ManagerErrorReason.REPO
+    assert error.reason is ManagerErrorReason.REPOSITORY
     assert error.operation == "streaming_loop"
     assert error.root_cause is repository_error
     assert error.__cause__ is repository_error
@@ -575,7 +676,7 @@ async def test_tail_gap_recovery_absorbs_repository_failure() -> None:
         )
 
     error = error_info.value
-    assert error.reason is ManagerErrorReason.REPO
+    assert error.reason is ManagerErrorReason.REPOSITORY
     assert error.operation == "tail_gap_sync"
     assert error.root_cause is repository_error
     assert error.__cause__ is repository_error
@@ -597,7 +698,11 @@ async def test_tail_gap_recovery_requests_only_missing_closed_candles(
             open_time=latest_open_time,
         ),
     )
-    manager = _manager(repository)
+    event_publisher = FakeEventPublisher()
+    manager = _manager(
+        repository=repository,
+        event_publisher=event_publisher,
+    )
 
     synchronized_count = await manager.tail_gap_sync(
         market=Market.BINANCE,
@@ -614,6 +719,16 @@ async def test_tail_gap_recovery_requests_only_missing_closed_candles(
             timeframe,
             latest_open_time + timeframe.duration,
             finish_time,
+        )
+    ]
+    assert event_publisher.events == [
+        CandlesSynchronized(
+            market=Market.BINANCE,
+            symbol="BTCUSDT",
+            timeframe=timeframe,
+            start_time=latest_open_time + timeframe.duration,
+            finish_time=finish_time,
+            synchronized_count=2,
         )
     ]
 
@@ -654,9 +769,14 @@ def _manager(
     repository: FakeCandleRepository,
     manager_config: CandleManagerConfig | None = None,
     sleep_provider: Callable[[float], Awaitable[None]] | None = None,
+    event_publisher: FakeEventPublisher | None = None,
 ) -> CandleManager:
     return CandleManager(
         config=manager_config or CandleManagerConfig(),
+        publisher=cast(
+            EventPublisher[CandleEvent],
+            event_publisher or FakeEventPublisher(),
+        ),
         repository=cast(CandleRepository, repository),
         time_provider=lambda: _CURRENT_TIME,
         sleep_provider=sleep_provider,

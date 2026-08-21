@@ -8,12 +8,21 @@ from collections.abc import Awaitable, Callable
 
 import asyncio
 
-from scam_sniffer.domain.errors import DomainError, DomainErrorReason
+from scam_sniffer.domain.errors import (
+    DomainError,
+    ManagerError,
+    DomainErrorReason,
+    ManagerErrorReason
+)
 from scam_sniffer.domain.models import Candle, Market, Timeframe
+from scam_sniffer.domain.events.proto import EventPublisher
+from scam_sniffer.domain.manager.config import CandleManagerConfig
+from scam_sniffer.domain.manager.events import (
+CandleEvent,
+    CandleClosed,
+    CandlesSynchronized,
+)
 from scam_sniffer.domain.repository.candle import CandleRepository
-
-from scam_sniffer.manager.errors import ManagerError, ManagerErrorReason
-from scam_sniffer.manager.config import CandleManagerConfig
 
 from scam_sniffer.utils.datetime import now_utc
 
@@ -23,6 +32,7 @@ class CandleManager:
     def __init__(
         self,
         config: CandleManagerConfig,
+        publisher: EventPublisher[CandleEvent],
         repository: CandleRepository,
         time_provider: Callable[[], datetime] | None = None,
         sleep_provider: Callable[[float], Awaitable[None]] | None = None,
@@ -31,11 +41,13 @@ class CandleManager:
 
         Args:
             config: Synchronization limits and stream reconnect delays.
+            publisher: Event publisher notified after successful persistence.
             repository: Domain repository used for synchronization and reads.
             time_provider: Optional timezone-aware clock for deterministic execution.
             sleep_provider: Optional asynchronous delay provider for reconnects.
         """
         self._config = config
+        self._publisher = publisher
         self._repository = repository
         self._time_provider = time_provider or now_utc
         self._sleep_provider = sleep_provider or asyncio.sleep
@@ -75,12 +87,25 @@ class CandleManager:
             operation="backfill",
         )
         start_time = end_time - timeframe.duration * self._config.backfill_size
-        return await self.__time_range_sync(
+        sync_count = await self.__time_range_sync(
             symbol=symbol,
             timeframe=timeframe,
             start_time=start_time,
             finish_time=end_time,
         )
+        if sync_count:
+            await self.__publish(
+                event=CandlesSynchronized(
+                    market=market,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_time=start_time,
+                    finish_time=end_time,
+                    synchronized_count=sync_count,
+                ),
+                operation="backfill",
+            )
+        return sync_count
 
     async def batch_fetch(
         self,
@@ -115,7 +140,7 @@ class CandleManager:
             )
         except DomainError as error:
             raise ManagerError(
-                reason=ManagerErrorReason.REPO,
+                reason=ManagerErrorReason.REPOSITORY,
                 message="Candle batch synchronization failed",
                 operation="batch_fetch",
                 root_cause=error,
@@ -176,6 +201,18 @@ class CandleManager:
                 start_time=gap_start_time,
                 finish_time=gap_finish_time,
             )
+        if sync_count:
+            await self.__publish(
+                event=CandlesSynchronized(
+                    market=market,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_time=start_time,
+                    finish_time=end_time,
+                    synchronized_count=sync_count,
+                ),
+                operation="batch_audit",
+            )
         return sync_count
 
     async def tail_gap_sync(
@@ -213,12 +250,25 @@ class CandleManager:
         )
         start_time = candle.open_time + timeframe.duration
 
-        return await self.__time_range_sync(
+        sync_count = await self.__time_range_sync(
             symbol=symbol,
             timeframe=timeframe,
             start_time=start_time,
             finish_time=end_time,
         )
+        if sync_count:
+            await self.__publish(
+                event=CandlesSynchronized(
+                    market=market,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_time=start_time,
+                    finish_time=end_time,
+                    synchronized_count=sync_count,
+                ),
+                operation="tail_gap_sync",
+            )
+        return sync_count
 
     def start_stream_task(
         self,
@@ -306,6 +356,30 @@ class CandleManager:
                     root_cause=result,
                 ) from result
 
+    async def __publish(
+        self,
+        event: CandleEvent,
+        operation: str,
+    ) -> None:
+        """Publish a candle event and translate downstream failures.
+
+        Args:
+            event: Persisted candle event ready for downstream processing.
+            operation: Manager operation that produced the event.
+
+        Raises:
+            ManagerError: If a downstream subscriber cannot process the event.
+        """
+        try:
+            await self._publisher.publish(event)
+        except Exception as error:
+            raise ManagerError(
+                reason=ManagerErrorReason.PUBLISHER,
+                message="Candle event publication failed",
+                operation=operation,
+                root_cause=error,
+            ) from error
+
     async def __get_last_cc(
         self,
         market: Market,
@@ -335,7 +409,7 @@ class CandleManager:
             )
         except DomainError as error:
             raise ManagerError(
-                reason=ManagerErrorReason.REPO,
+                reason=ManagerErrorReason.REPOSITORY,
                 message="Latest closed candle reading failed",
                 operation=operation,
                 root_cause=error,
@@ -374,7 +448,7 @@ class CandleManager:
             )
         except DomainError as error:
             raise ManagerError(
-                reason=ManagerErrorReason.REPO,
+                reason=ManagerErrorReason.REPOSITORY,
                 message="Candle continuity range reading failed",
                 operation="batch_audit",
                 root_cause=error,
@@ -450,12 +524,24 @@ class CandleManager:
                             else last_candle.open_time
                         )
                         if start_time < candle.open_time:
-                            await self.__time_range_sync(
+                            sync_count = await self.__time_range_sync(
                                 symbol=symbol,
                                 timeframe=timeframe,
                                 start_time=start_time,
                                 finish_time=candle.open_time,
                             )
+                            if sync_count:
+                                await self.__publish(
+                                    event=CandlesSynchronized(
+                                        market=candle.market,
+                                        symbol=symbol,
+                                        timeframe=timeframe,
+                                        start_time=start_time,
+                                        finish_time=candle.open_time,
+                                        synchronized_count=sync_count,
+                                    ),
+                                    operation="streaming_loop",
+                                )
 
                     is_newer = last_candle is None or candle.open_time > last_candle.open_time
                     is_closing = (
@@ -465,6 +551,11 @@ class CandleManager:
                     )
                     if is_newer or is_closing:
                         last_candle = candle
+                    if candle.is_closed:
+                        await self.__publish(
+                            event=CandleClosed(candle=candle),
+                            operation="streaming_loop",
+                        )
                     has_updates = True
                     retry_delay = self._config.stream_retry_delay
             except asyncio.CancelledError:
@@ -472,7 +563,7 @@ class CandleManager:
             except DomainError as error:
                 if error.reason is not DomainErrorReason.REMOTE:
                     raise ManagerError(
-                        reason=ManagerErrorReason.REPO,
+                        reason=ManagerErrorReason.REPOSITORY,
                         message="Candle stream synchronization failed",
                         operation="streaming_loop",
                         root_cause=error,

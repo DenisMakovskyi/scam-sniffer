@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from scam_sniffer.domain.errors import ManagerError, ManagerErrorReason
+
 @dataclass(frozen=True, slots=True)
 class CandleManagerConfig:
     """Configure candle synchronization limits and stream reconnect delays.
@@ -22,13 +24,29 @@ class CandleManagerConfig:
         """Validate synchronization limits and reconnect delays.
 
         Raises:
-            ValueError: If a limit or reconnect delay is outside its valid range.
+            ManagerError: If a limit or reconnect delay is outside its valid range.
         """
         if not 1 <= self.batch_size <= 1_500:
-            raise ValueError("Batch size must be between 1 and 1500")
+            raise ManagerError(
+                reason=ManagerErrorReason.CONF,
+                message=f"Batch size must be between 1 and 1500",
+                operation="init",
+            )
         if self.backfill_size < 1:
-            raise ValueError("Backfill size must be positive")
+            raise ManagerError(
+                reason=ManagerErrorReason.CONF,
+                message=f"Backfill size must be positive",
+                operation="init",
+            )
         if self.stream_retry_delay <= 0:
-            raise ValueError("Stream retry delay must be positive")
+            raise ManagerError(
+                reason=ManagerErrorReason.CONF,
+                message=f"Stream retry delay must be positive",
+                operation="init",
+            )
         if self.stream_retry_max_delay < self.stream_retry_delay:
-            raise ValueError("Stream maximum retry delay cannot be less than retry delay")
+            raise ManagerError(
+                reason=ManagerErrorReason.CONF,
+                message=f"Stream maximum retry delay cannot be less than retry delay",
+                operation="init",
+            )

@@ -76,7 +76,7 @@ class BinanceStock(AbsStock):
             StockError: If transport configuration or initialization fails.
         """
         if timeout_seconds <= 0:
-            api_error = ApiError(
+            error = ApiError(
                 reason=ApiErrorReason.CONF,
                 message="API request timeout must be positive",
                 operation="init",
@@ -85,8 +85,7 @@ class BinanceStock(AbsStock):
                 reason=StockErrorReason.API_ERROR,
                 message="Binance API client configuration is invalid",
                 operation="init",
-                root_cause=api_error,
-            ) from api_error
+            ) from error
 
         super().__init__(
             client=client or httpx.AsyncClient(
@@ -153,7 +152,6 @@ class BinanceStock(AbsStock):
                 reason=StockErrorReason.API_ERROR,
                 message="Binance kline request failed",
                 operation="get_klines",
-                root_cause=error,
             ) from error
 
     @override
@@ -186,7 +184,6 @@ class BinanceStock(AbsStock):
                 reason=StockErrorReason.API_ERROR,
                 message="Binance kline stream failed",
                 operation="stream_klines",
-                root_cause=error,
             ) from error
 
 def _validate_klines_request(

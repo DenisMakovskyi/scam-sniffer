@@ -14,7 +14,6 @@ class StockError(ScamError):
         reason: StockErrorReason,
         message: str,
         operation: str,
-        root_cause: Exception | None = None,
     ) -> None:
         """Initialize an exchange integration failure.
 
@@ -22,13 +21,11 @@ class StockError(ScamError):
             reason: Exchange failure category.
             message: Human-readable failure description.
             operation: Exchange operation active during the failure.
-            root_cause: Lower-level transport failure, if available.
         """
         super().__init__(
             reason=reason,
             message=message,
             operation=operation,
-            root_cause=root_cause,
         )
 
 class StockErrorReason(StrEnum):

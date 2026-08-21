@@ -1,5 +1,5 @@
 from scam_sniffer.errors import ScamError
-from scam_sniffer.manager.errors import ManagerError
+from scam_sniffer.domain.errors import ManagerError
 from scam_sniffer.data.api.client.errors import ApiError
 from scam_sniffer.data.api.stock.errors import StockError
 from scam_sniffer.data.database.errors import DatabaseError
