@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from scam_sniffer.domain.errors import TaskQueueError, TaskQueueErrorReason
 
 @dataclass(frozen=True, slots=True)
-class TaskQueueConfig:
+class AsyncTaskQueueConfig:
     """Configure queue capacity, workers, and completed-key retention.
 
     Attributes:

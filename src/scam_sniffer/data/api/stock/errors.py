@@ -34,6 +34,6 @@ class StockError(ScamError):
 class StockErrorReason(StrEnum):
     """Categorize failures produced by an exchange integration."""
 
-    API_ERROR = "api_error"
+    API = "api"
     INVALID_LIMIT = "invalid_limit"
     INVALID_RANGE = "invalid_range"

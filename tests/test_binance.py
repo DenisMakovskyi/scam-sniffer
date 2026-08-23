@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import json
 from typing import Any
+from http import HTTPStatus
 from datetime import UTC, datetime
 
-from http import HTTPStatus
-
-import json
 import httpx
 import pytest
 
+from scam_sniffer.data.api.stock.binance import BinanceStock
+from scam_sniffer.data.api.client.config import ApiConfig, WsConfig
 from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
-from scam_sniffer.data.api.client.config import WsConfig
 from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
 from scam_sniffer.data.api.stock.models import TransportDto, TimeframeResponse
-from scam_sniffer.data.api.stock.binance import BinanceStock
+
+_API_CONFIG = ApiConfig(
+    rest_url="https://fapi.binance.com",
+    ws_config=WsConfig(ws_url="wss://fstream.binance.com/ws"),
+    max_attempts=1,
+)
 
 class FakeWebSocket:
     def __init__(self, messages: list[str]) -> None:
@@ -33,6 +38,23 @@ class FakeWebSocket:
             return next(self._messages)
         except StopIteration as error:
             raise StopAsyncIteration from error
+
+def test_init_absorbs_api_client_error_as_root_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def async_client(**_: Any) -> httpx.AsyncClient:
+        raise ValueError("Invalid HTTP client configuration")
+
+    monkeypatch.setattr("scam_sniffer.data.api.client.client.httpx.AsyncClient", async_client)
+
+    with pytest.raises(StockError) as error_info:
+        BinanceStock(config=_API_CONFIG)
+
+    error = error_info.value
+    assert error.reason is StockErrorReason.API
+    assert isinstance(error.root_cause, ApiError)
+    assert error.root_cause.reason is ApiErrorReason.CONF
+    assert error.__cause__ is error.root_cause
 
 @pytest.mark.asyncio
 async def test_ws_config_reaches_api_client(
@@ -65,15 +87,18 @@ async def test_ws_config_reaches_api_client(
     monkeypatch.setattr("scam_sniffer.data.api.client.client.websockets.connect", connect)
     client = httpx.AsyncClient(base_url="https://fapi.binance.com")
     stock = BinanceStock(
-        client=client,
-        ws_config=WsConfig(
-            ws_url="wss://fstream.binance.com/ws",
-            ws_queue_size=7,
-            ws_ping_timeout=8.0,
-            ws_ping_interval=9.0,
-            ws_close_timeout=10.0,
+        config=ApiConfig(
+            rest_url="https://fapi.binance.com",
+            ws_config=WsConfig(
+                ws_url="wss://fstream.binance.com/ws",
+                ws_queue_size=7,
+                ws_ping_timeout=8.0,
+                ws_ping_interval=9.0,
+                ws_close_timeout=10.0,
+            ),
+            max_attempts=1,
         ),
-        max_attempts=1,
+        client=client,
     )
     try:
         candle = await anext(stock.stream_candles(symbol="BTCUSDT", timeframe=TimeframeResponse.M5))
@@ -98,7 +123,7 @@ async def test_stream_klines_absorbs_invalid_response_as_api_error(
 
     monkeypatch.setattr("scam_sniffer.data.api.client.client.websockets.connect", connect)
     client = httpx.AsyncClient(base_url="https://fapi.binance.com")
-    stock = BinanceStock(client=client, max_attempts=1)
+    stock = BinanceStock(config=_API_CONFIG, client=client)
     try:
         with pytest.raises(StockError) as error_info:
             await anext(stock.stream_candles(symbol="BTCUSDT", timeframe=TimeframeResponse.M5))
@@ -106,7 +131,7 @@ async def test_stream_klines_absorbs_invalid_response_as_api_error(
         await stock.close()
 
     error = error_info.value
-    assert error.reason is StockErrorReason.API_ERROR
+    assert error.reason is StockErrorReason.API
     assert isinstance(error.root_cause, ApiError)
     assert error.root_cause.reason is ApiErrorReason.NEGOTIATION
     assert error.__cause__ is error.root_cause
@@ -140,7 +165,7 @@ async def test_get_klines_maps_binance_response() -> None:
         transport=httpx.MockTransport(handler),
         base_url="https://fapi.binance.com",
     )
-    stock = BinanceStock(client=client, max_attempts=1)
+    stock = BinanceStock(config=_API_CONFIG, client=client)
     candles = await stock.get_candles(
         symbol="btcusdt",
         k_limit=1,
@@ -165,7 +190,7 @@ async def test_get_klines_absorbs_api_error_as_root_cause() -> None:
         transport=httpx.MockTransport(handler),
         base_url="https://fapi.binance.com",
     )
-    stock = BinanceStock(client=client, max_attempts=1)
+    stock = BinanceStock(config=_API_CONFIG, client=client)
     try:
         with pytest.raises(StockError) as error_info:
             await stock.get_candles(
@@ -179,19 +204,9 @@ async def test_get_klines_absorbs_api_error_as_root_cause() -> None:
         await stock.close()
 
     error = error_info.value
-    assert error.reason is StockErrorReason.API_ERROR
+    assert error.reason is StockErrorReason.API
     assert isinstance(error.root_cause, ApiError)
-    assert error.root_cause.reason is ApiErrorReason.RATE_LIMIT_EXCEEDED
-    assert error.__cause__ is error.root_cause
-
-def test_init_absorbs_api_config_error_as_root_cause() -> None:
-    with pytest.raises(StockError) as error_info:
-        BinanceStock(timeout_seconds=0)
-
-    error = error_info.value
-    assert error.reason is StockErrorReason.API_ERROR
-    assert isinstance(error.root_cause, ApiError)
-    assert error.root_cause.reason is ApiErrorReason.CONF
+    assert error.root_cause.reason is ApiErrorReason.RATE_LIMIT
     assert error.__cause__ is error.root_cause
 
 @pytest.mark.asyncio
@@ -203,7 +218,7 @@ async def test_get_klines_absorbs_invalid_response_as_api_error() -> None:
         transport=httpx.MockTransport(handler),
         base_url="https://fapi.binance.com",
     )
-    stock = BinanceStock(client=client, max_attempts=1)
+    stock = BinanceStock(config=_API_CONFIG, client=client)
     try:
         with pytest.raises(StockError) as error_info:
             await stock.get_candles(
@@ -217,7 +232,7 @@ async def test_get_klines_absorbs_invalid_response_as_api_error() -> None:
         await stock.close()
 
     error = error_info.value
-    assert error.reason is StockErrorReason.API_ERROR
+    assert error.reason is StockErrorReason.API
     assert isinstance(error.root_cause, ApiError)
     assert error.root_cause.reason is ApiErrorReason.NEGOTIATION
     assert error.__cause__ is error.root_cause

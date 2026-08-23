@@ -31,3 +31,10 @@ class BinanceMappingIndex(IntEnum):
     TRADE_COUNT = 8
     TRADE_VOLUME = 5
     VOLUME_QUOTE = 7
+
+class BinanceRequestParam(StrEnum):
+    SYMBOL = "symbol"
+    K_LIMIT = "limit"
+    INTERVAL = "interval"
+    START_TIME = "startTime"
+    FINISH_TIME = "endTime"

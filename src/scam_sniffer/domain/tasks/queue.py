@@ -9,13 +9,13 @@ from collections.abc import Hashable
 import asyncio
 
 from scam_sniffer.domain.errors import TaskQueueError, TaskQueueErrorReason
-from scam_sniffer.domain.tasks.config import TaskQueueConfig
+from scam_sniffer.domain.tasks.config import AsyncTaskQueueConfig
 from scam_sniffer.domain.tasks.proto import QueueTask, TaskQueue
 
-class MemoTaskQueue[TKey: Hashable](TaskQueue[TKey]):
+class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
     """Execute bounded asynchronous tasks while suppressing duplicate keys."""
 
-    def __init__(self, config: TaskQueueConfig) -> None:
+    def __init__(self, config: AsyncTaskQueueConfig) -> None:
         """Initialize a stopped queue with empty deduplication state.
 
         Args:

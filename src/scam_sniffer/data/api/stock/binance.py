@@ -4,51 +4,43 @@ from __future__ import annotations
 
 from typing import Any, override
 from dataclasses import replace
-
-from decimal import Decimal, InvalidOperation
 from collections.abc import AsyncIterator
 
-import httpx
-
-from http import HTTPStatus
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, datetime
 
-from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
-from scam_sniffer.data.api.client.config import WsConfig
-from scam_sniffer.data.api.stock.base import AbsStock
-from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
+from http import HTTPStatus
+import httpx
+
 from scam_sniffer.data.api.stock.models import (
     MarketDto,
     TransportDto,
     CandleResponse,
     TimeframeResponse,
 )
-from scam_sniffer.data.api.stock.mapping import BinanceMappingKey, BinanceMappingIndex
-
 from scam_sniffer.utils.datetime import ms_to_sec
+from scam_sniffer.data.api.stock.base import AbsStock
+from scam_sniffer.data.api.client.config import ApiConfig
+from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
+from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
+from scam_sniffer.data.api.stock.mapping import (
+    BinanceMappingKey,
+    BinanceMappingIndex,
+    BinanceRequestParam,
+)
 
 class BinanceStock(AbsStock):
     """Read historical and live USD-M futures candles from Binance."""
 
-    __WS_URL = "wss://fstream.binance.com/ws"
-    __REST_URL = "https://fapi.binance.com"
-    __WS_CONFIG = WsConfig(ws_url=__WS_URL)
-    __HEADER_USER_AGENT = "User-Agent"
-
     __API_PATH_KLINES = "/fapi/v1/klines"
 
-    __PARAM_SYMBOL = "symbol"
-    __PARAM_K_LIMIT = "limit"
-    __PARAM_INTERVAL = "interval"
-    __PARAM_START_TIME = "startTime"
-    __PARAM_FINISH_TIME = "endTime"
-
-    __USER_AGENT = (
+    __HEADER_USER_AGENT_KEY = "User-Agent"
+    __HEADER_USER_AGENT_VALUE = (
         "Chrome/131.0.0.0 Safari/537.36"
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
     )
-    __RATE_LIMIT_CODES = frozenset(
+    __RATE_LIMIT_HTTP_STATUS_CODES = frozenset(
         {
             HTTPStatus.IM_A_TEAPOT,
             HTTPStatus.TOO_MANY_REQUESTS,
@@ -57,46 +49,23 @@ class BinanceStock(AbsStock):
 
     def __init__(
         self,
+        config: ApiConfig,
         client: httpx.AsyncClient | None = None,
-        rest_url: str = __REST_URL,
-        ws_config: WsConfig = __WS_CONFIG,
-        max_attempts: int = 5,
-        timeout_seconds: float = 15.0,
     ) -> None:
         """Initialize a Binance Futures market-data source.
 
         Args:
+            config: Binance HTTP and WebSocket transport configuration.
             client: Optional preconfigured HTTP client used mainly for injection.
-            rest_url: Binance Futures REST base URL.
-            ws_config: Binance Futures WebSocket configuration.
-            max_attempts: Maximum number of HTTP attempts per request.
-            timeout_seconds: HTTP request timeout in seconds.
 
         Raises:
             StockError: If transport configuration or initialization fails.
         """
-        if timeout_seconds <= 0:
-            error = ApiError(
-                reason=ApiErrorReason.CONF,
-                message="API request timeout must be positive",
-                operation="init",
-            )
-            raise StockError(
-                reason=StockErrorReason.API_ERROR,
-                message="Binance API client configuration is invalid",
-                operation="init",
-                root_cause=error,
-            ) from error
-
         super().__init__(
-            client=client or httpx.AsyncClient(
-                headers={self.__HEADER_USER_AGENT: self.__USER_AGENT},
-                timeout=timeout_seconds,
-                base_url=rest_url.rstrip("/"),
-            ),
-            ws_config=ws_config,
-            max_attempts=max_attempts,
-            rate_limit_codes=self.__RATE_LIMIT_CODES,
+            config=config,
+            client=client,
+            headers={self.__HEADER_USER_AGENT_KEY: self.__HEADER_USER_AGENT_VALUE},
+            rate_limit_codes=self.__RATE_LIMIT_HTTP_STATUS_CODES,
         )
 
     @override
@@ -136,11 +105,11 @@ class BinanceStock(AbsStock):
             payload = await self._api_client.http_get(
                 path=self.__API_PATH_KLINES,
                 params={
-                    self.__PARAM_SYMBOL: symbol.upper(),
-                    self.__PARAM_K_LIMIT: k_limit,
-                    self.__PARAM_INTERVAL: timeframe.value,
-                    self.__PARAM_START_TIME: start_time_ms,
-                    self.__PARAM_FINISH_TIME: finish_time_ms,
+                    BinanceRequestParam.SYMBOL: symbol.upper(),
+                    BinanceRequestParam.K_LIMIT: k_limit,
+                    BinanceRequestParam.INTERVAL: timeframe.value,
+                    BinanceRequestParam.START_TIME: start_time_ms,
+                    BinanceRequestParam.FINISH_TIME: finish_time_ms,
                 },
             )
             return _rest_build_candles(
@@ -150,7 +119,7 @@ class BinanceStock(AbsStock):
             )
         except ApiError as error:
             raise StockError(
-                reason=StockErrorReason.API_ERROR,
+                reason=StockErrorReason.API,
                 message="Binance kline request failed",
                 operation="get_klines",
                 root_cause=error,
@@ -183,7 +152,7 @@ class BinanceStock(AbsStock):
                 yield candle
         except ApiError as error:
             raise StockError(
-                reason=StockErrorReason.API_ERROR,
+                reason=StockErrorReason.API,
                 message="Binance kline stream failed",
                 operation="stream_klines",
                 root_cause=error,

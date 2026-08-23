@@ -4,9 +4,9 @@ from collections.abc import Hashable
 
 import pytest
 
-from scam_sniffer.domain.tasks.config import TaskQueueConfig
+from scam_sniffer.domain.tasks.config import AsyncTaskQueueConfig
 from scam_sniffer.domain.errors import TaskQueueError, TaskQueueErrorReason
-from scam_sniffer.domain.tasks.queue import MemoTaskQueue
+from scam_sniffer.domain.tasks.queue import AsyncTaskQueue
 
 class FakeQueueTask:
     def __init__(
@@ -46,14 +46,14 @@ class InvalidQueueTask:
 
 def test_task_queue_config_rejects_invalid_values() -> None:
     with pytest.raises(TaskQueueError):
-        TaskQueueConfig(queue_size=0)
+        AsyncTaskQueueConfig(queue_size=0)
     with pytest.raises(TaskQueueError):
-        TaskQueueConfig(worker_count=0)
+        AsyncTaskQueueConfig(worker_count=0)
     with pytest.raises(TaskQueueError):
-        TaskQueueConfig(dedupe_cache_size=-1)
+        AsyncTaskQueueConfig(dedupe_cache_size=-1)
 
 def test_task_queue_start_requires_running_event_loop() -> None:
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig())
 
     with pytest.raises(TaskQueueError) as error_info:
         task_queue.start()
@@ -66,7 +66,7 @@ def test_task_queue_start_requires_running_event_loop() -> None:
 @pytest.mark.asyncio
 async def test_task_queue_starts_once_and_rejects_stopped_submission() -> None:
     calls: list[str] = []
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig())
 
     with pytest.raises(TaskQueueError) as error_info:
         task_queue.submit(FakeQueueTask(key="first", calls=calls))
@@ -87,7 +87,7 @@ async def test_task_queue_rejects_start_and_submission_during_shutdown() -> None
     calls: list[str] = []
     start_event = asyncio.Event()
     release_event = asyncio.Event()
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig())
     task_queue.start()
 
     task_queue.submit(
@@ -120,7 +120,7 @@ async def test_task_queue_deduplicates_active_and_completed_tasks() -> None:
     calls: list[str] = []
     start_event = asyncio.Event()
     release_event = asyncio.Event()
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig())
     task_queue.start()
 
     first_task = FakeQueueTask(
@@ -147,7 +147,7 @@ async def test_task_queue_deduplicates_active_and_completed_tasks() -> None:
 @pytest.mark.asyncio
 async def test_task_queue_preserves_order_with_one_worker() -> None:
     calls: list[str] = []
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig(worker_count=1))
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig(worker_count=1))
     task_queue.start()
 
     assert task_queue.submit(FakeQueueTask(key="first", calls=calls))
@@ -166,7 +166,7 @@ async def test_task_queue_executes_tasks_with_configured_workers() -> None:
     first_start_event = asyncio.Event()
     second_start_event = asyncio.Event()
     release_event = asyncio.Event()
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig(worker_count=2))
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig(worker_count=2))
     task_queue.start()
 
     task_queue.submit(
@@ -199,8 +199,8 @@ async def test_task_queue_executes_tasks_with_configured_workers() -> None:
 @pytest.mark.asyncio
 async def test_task_queue_releases_evicted_completed_key() -> None:
     calls: list[str] = []
-    task_queue = MemoTaskQueue[str](
-        config=TaskQueueConfig(dedupe_cache_size=1),
+    task_queue = AsyncTaskQueue[str](
+        config=AsyncTaskQueueConfig(dedupe_cache_size=1),
     )
     task_queue.start()
 
@@ -219,7 +219,7 @@ async def test_task_queue_releases_evicted_completed_key() -> None:
 async def test_task_queue_releases_failed_key_and_keeps_worker_alive() -> None:
     calls: list[str] = []
     task_error = RuntimeError("Task failed")
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig())
     task_queue.start()
 
     assert task_queue.submit(
@@ -247,7 +247,7 @@ async def test_task_queue_releases_failed_key_and_keeps_worker_alive() -> None:
 async def test_task_queue_shutdown_reports_execution_failure_and_stops_workers() -> None:
     calls: list[str] = []
     task_error = RuntimeError("Task failed")
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig())
     task_queue.start()
     task_queue.submit(FakeQueueTask(key="failed", calls=calls, error=task_error))
 
@@ -267,7 +267,7 @@ async def test_task_queue_rejects_submission_when_capacity_is_reached() -> None:
     calls: list[str] = []
     start_event = asyncio.Event()
     release_event = asyncio.Event()
-    task_queue = MemoTaskQueue[str](config=TaskQueueConfig(queue_size=1))
+    task_queue = AsyncTaskQueue[str](config=AsyncTaskQueueConfig(queue_size=1))
     task_queue.start()
 
     assert task_queue.submit(
@@ -294,7 +294,7 @@ async def test_task_queue_rejects_submission_when_capacity_is_reached() -> None:
 
 @pytest.mark.asyncio
 async def test_task_queue_rejects_unhashable_task_key() -> None:
-    task_queue = MemoTaskQueue[Hashable](config=TaskQueueConfig())
+    task_queue = AsyncTaskQueue[Hashable](config=AsyncTaskQueueConfig())
     task_queue.start()
 
     with pytest.raises(TaskQueueError) as error_info:

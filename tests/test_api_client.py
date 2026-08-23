@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+import json
 from typing import Any
-
 from http import HTTPStatus
 
-import json
 import httpx
 import pytest
 
-from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
-from scam_sniffer.data.api.client.config import WsConfig
 from scam_sniffer.data.api.client.client import ApiClient
+from scam_sniffer.data.api.client.config import ApiConfig, WsConfig
+from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
 
 class FakeWebSocket:
     def __init__(self, messages: list[str]) -> None:
@@ -30,6 +29,62 @@ class FakeWebSocket:
             return next(self._messages)
         except StopIteration as error:
             raise StopAsyncIteration from error
+
+@pytest.mark.asyncio
+async def test_init_builds_http_client_from_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    original_async_client = httpx.AsyncClient
+
+    def async_client(**kwargs: Any) -> httpx.AsyncClient:
+        captured.update(kwargs)
+        return original_async_client()
+
+    monkeypatch.setattr("scam_sniffer.data.api.client.client.httpx.AsyncClient", async_client)
+    api_client = ApiClient(
+        config=ApiConfig(
+            rest_url="https://example.com/",
+            ws_config=WsConfig(ws_url="wss://example.com/ws"),
+            timeout_seconds=7.0,
+        ),
+        client=None,
+        headers={"X-Test": "value"},
+        rate_limit_codes=frozenset({HTTPStatus.TOO_MANY_REQUESTS}),
+    )
+    await api_client.close()
+
+    assert captured == {
+        "headers": {"X-Test": "value"},
+        "timeout": 7.0,
+        "base_url": "https://example.com",
+    }
+
+@pytest.mark.parametrize(
+    ("rest_url", "max_attempts", "max_retry_delay", "timeout_seconds"),
+    (
+        ("", 1, 30.0, 15.0),
+        ("https://example.com", 0, 30.0, 15.0),
+        ("https://example.com", 1, 0.0, 15.0),
+        ("https://example.com", 1, 30.0, 0.0),
+    ),
+)
+def test_api_config_rejects_invalid_values(
+    rest_url: str,
+    max_attempts: int,
+    max_retry_delay: float,
+    timeout_seconds: float,
+) -> None:
+    with pytest.raises(ApiError) as error_info:
+        ApiConfig(
+            rest_url=rest_url,
+            ws_config=WsConfig(ws_url="wss://example.com/ws"),
+            max_attempts=max_attempts,
+            max_retry_delay=max_retry_delay,
+            timeout_seconds=timeout_seconds,
+        )
+
+    assert error_info.value.reason is ApiErrorReason.CONF
 
 @pytest.mark.asyncio
 async def test_get_returns_decoded_json() -> None:
@@ -87,7 +142,7 @@ async def test_rate_limit_raises_typed_error() -> None:
     finally:
         await api_client.close()
 
-    assert error_info.value.reason is ApiErrorReason.RATE_LIMIT_EXCEEDED
+    assert error_info.value.reason is ApiErrorReason.RATE_LIMIT
 
 @pytest.mark.asyncio
 async def test_stream_delivers_config_and_parsed_events(
@@ -124,8 +179,12 @@ async def test_stream_delivers_config_and_parsed_events(
 
 def _api_client(client: httpx.AsyncClient) -> ApiClient:
     return ApiClient(
+        config=ApiConfig(
+            rest_url="https://example.com",
+            ws_config=WsConfig(ws_url="wss://example.com/ws"),
+            max_attempts=1,
+        ),
         client=client,
-        ws_config=WsConfig(ws_url="wss://example.com/ws"),
-        max_attempts=1,
+        headers={},
         rate_limit_codes=frozenset({HTTPStatus.TOO_MANY_REQUESTS}),
     )

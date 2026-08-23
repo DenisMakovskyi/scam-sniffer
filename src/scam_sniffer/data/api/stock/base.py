@@ -5,13 +5,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 
-import httpx
-
 from http import HTTPStatus
 from datetime import datetime
 
+import httpx
+
 from scam_sniffer.data.api.client.errors import ApiError
-from scam_sniffer.data.api.client.config import WsConfig
+from scam_sniffer.data.api.client.config import ApiConfig
 from scam_sniffer.data.api.client.client import ApiClient
 from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
 from scam_sniffer.data.api.stock.models import CandleResponse, TimeframeResponse
@@ -21,17 +21,17 @@ class AbsStock(ABC):
 
     def __init__(
         self,
-        client: httpx.AsyncClient,
-        ws_config: WsConfig,
-        max_attempts: int,
+        config: ApiConfig,
+        client: httpx.AsyncClient | None,
+        headers: dict[str, str],
         rate_limit_codes: frozenset[HTTPStatus],
     ) -> None:
         """Initialize an exchange source around the shared API client.
 
         Args:
-            client: Configured asynchronous HTTP client.
-            ws_config: WebSocket transport configuration.
-            max_attempts: Maximum number of HTTP attempts per request.
+            config: Shared HTTP and WebSocket transport configuration.
+            client: Optional preconfigured asynchronous HTTP client.
+            headers: Exchange-specific HTTP headers.
             rate_limit_codes: HTTP statuses that trigger rate-limit retries.
 
         Raises:
@@ -39,14 +39,14 @@ class AbsStock(ABC):
         """
         try:
             self._api_client = ApiClient(
+                config=config,
                 client=client,
-                ws_config=ws_config,
-                max_attempts=max_attempts,
+                headers=headers,
                 rate_limit_codes=rate_limit_codes,
             )
         except ApiError as error:
             raise StockError(
-                reason=StockErrorReason.API_ERROR,
+                reason=StockErrorReason.API,
                 message="Stock API client init failed",
                 operation="init",
                 root_cause=error,
@@ -62,7 +62,7 @@ class AbsStock(ABC):
             await self._api_client.close()
         except ApiError as error:
             raise StockError(
-                reason=StockErrorReason.API_ERROR,
+                reason=StockErrorReason.API,
                 message="Stock API client shutdown failed",
                 operation="close",
                 root_cause=error,

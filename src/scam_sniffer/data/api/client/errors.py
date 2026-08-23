@@ -33,5 +33,5 @@ class ApiErrorReason(StrEnum):
 
     CONF = "conf"
     CONNECTION = "connection"
+    RATE_LIMIT = "rate_limit"
     NEGOTIATION = "negotiation"
-    RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"

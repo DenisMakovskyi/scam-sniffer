@@ -1,7 +1,5 @@
 """Configuration models for shared API transports."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
@@ -46,5 +44,54 @@ class WsConfig:
             raise ApiError(
                 reason=ApiErrorReason.CONF,
                 message="WebSocket timeouts must be positive",
+                operation="init",
+            )
+
+@dataclass(frozen=True, slots=True)
+class ApiConfig:
+    """Configure shared HTTP and WebSocket API transports.
+
+    Attributes:
+        rest_url: Base HTTP endpoint URL.
+        ws_config: WebSocket endpoint and heartbeat configuration.
+        max_attempts: Maximum number of HTTP attempts per request.
+        max_retry_delay: Maximum HTTP retry delay in seconds.
+        timeout_seconds: HTTP request timeout in seconds.
+    """
+
+    rest_url: str
+    ws_config: WsConfig
+    max_attempts: int = 5
+    max_retry_delay: float = 30.0
+    timeout_seconds: float = 15.0
+
+    def __post_init__(self) -> None:
+        """Validate HTTP endpoint, retry, and timeout values.
+
+        Raises:
+            ApiError: If an API transport setting is invalid.
+        """
+        if not self.rest_url.strip():
+            raise ApiError(
+                reason=ApiErrorReason.CONF,
+                message="REST URL cannot be empty",
+                operation="init",
+            )
+        if self.max_attempts < 1:
+            raise ApiError(
+                reason=ApiErrorReason.CONF,
+                message="API retry count must be positive",
+                operation="init",
+            )
+        if self.max_retry_delay <= 0:
+            raise ApiError(
+                reason=ApiErrorReason.CONF,
+                message="API maximum retry delay must be positive",
+                operation="init",
+            )
+        if self.timeout_seconds <= 0:
+            raise ApiError(
+                reason=ApiErrorReason.CONF,
+                message="API request timeout must be positive",
                 operation="init",
             )

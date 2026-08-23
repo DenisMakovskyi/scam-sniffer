@@ -5,52 +5,57 @@ from __future__ import annotations
 from typing import Any, TypeVar
 from collections.abc import AsyncIterator, Callable
 
-import json
-import httpx
 import random
 import asyncio
-import websockets
 
 from http import HTTPStatus
 
+import json
+import httpx
+import websockets
+
 from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
-from scam_sniffer.data.api.client.config import WsConfig
+from scam_sniffer.data.api.client.config import ApiConfig
 
 T = TypeVar("T")
 
 class ApiClient:
     """Execute remote transport operations with bounded HTTP retries."""
 
-    __MAX_RETRY_DELAY_SECONDS = 30.0
-
     def __init__(
         self,
-        client: httpx.AsyncClient,
-        ws_config: WsConfig,
-        max_attempts: int,
+        config: ApiConfig,
+        client: httpx.AsyncClient | None,
+        headers: dict[str, str],
         rate_limit_codes: frozenset[HTTPStatus],
     ) -> None:
         """Initialize the shared transport client.
 
         Args:
-            client: Configured asynchronous HTTP client.
-            ws_config: WebSocket connection configuration.
-            max_attempts: Maximum number of HTTP attempts per request.
+            config: HTTP and WebSocket transport configuration.
+            client: Optional preconfigured asynchronous HTTP client.
+            headers: HTTP headers used when building the client.
             rate_limit_codes: HTTP statuses that trigger rate-limit retries.
 
         Raises:
-            ApiError: If the retry count is not positive.
+            ApiError: If the asynchronous HTTP client cannot be initialized.
         """
-        if max_attempts < 1:
+        try:
+            self._client = client or httpx.AsyncClient(
+                headers=headers,
+                timeout=config.timeout_seconds,
+                base_url=config.rest_url.rstrip("/"),
+            )
+        except (TypeError, ValueError) as error:
             raise ApiError(
                 reason=ApiErrorReason.CONF,
-                message="API retry count must be positive",
+                message="API client configuration is invalid",
                 operation="init",
-            )
+            ) from error
 
-        self._client = client
-        self._ws_config = ws_config
-        self._max_attempts = max_attempts
+        self._ws_config = config.ws_config
+        self._max_attempts = config.max_attempts
+        self._max_retry_delay = config.max_retry_delay
         self._rate_limit_codes = rate_limit_codes
 
     async def close(self) -> None:
@@ -77,7 +82,7 @@ class ApiClient:
                 if response.status_code in self._rate_limit_codes:
                     if attempt == self._max_attempts:
                         raise ApiError(
-                            reason=ApiErrorReason.RATE_LIMIT_EXCEEDED,
+                            reason=ApiErrorReason.RATE_LIMIT,
                             message="API rate limit is exceeded after bounded retries",
                             operation="get",
                         )
@@ -96,7 +101,7 @@ class ApiClient:
             except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as error:
                 last_error = error
                 if attempt < self._max_attempts:
-                    delay = min(self.__MAX_RETRY_DELAY_SECONDS, 2 ** (attempt - 1))
+                    delay = min(self._max_retry_delay, 2 ** (attempt - 1))
                     await asyncio.sleep(delay + random.uniform(0, 0.25))
 
         raise ApiError(
