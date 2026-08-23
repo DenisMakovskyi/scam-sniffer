@@ -15,7 +15,7 @@ from scam_sniffer.domain.manager.events import (
     CandlesSynchronized,
 )
 from scam_sniffer.domain.models import Candle, Market, Timeframe
-from scam_sniffer.domain.events.bus import EventPublisher
+from scam_sniffer.domain.events.proto import EventPublisher
 from scam_sniffer.domain.repository.candle import CandleRepository
 from scam_sniffer.domain.errors import (
     DomainError,
@@ -112,15 +112,15 @@ class FakeEventPublisher:
         self.events.append(event)
 
 def test_candle_manager_config_rejects_invalid_values() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ManagerError):
         CandleManagerConfig(batch_size=0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ManagerError):
         CandleManagerConfig(batch_size=1_501)
-    with pytest.raises(ValueError):
+    with pytest.raises(ManagerError):
         CandleManagerConfig(backfill_size=0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ManagerError):
         CandleManagerConfig(stream_retry_delay=0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ManagerError):
         CandleManagerConfig(stream_retry_delay=2, stream_retry_max_delay=1)
 
 @pytest.mark.asyncio

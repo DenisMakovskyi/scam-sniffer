@@ -29,24 +29,24 @@ class CandleManagerConfig:
         if not 1 <= self.batch_size <= 1_500:
             raise ManagerError(
                 reason=ManagerErrorReason.CONF,
-                message=f"Batch size must be between 1 and 1500",
+                message="Batch size must be between 1 and 1500",
                 operation="init",
             )
         if self.backfill_size < 1:
             raise ManagerError(
                 reason=ManagerErrorReason.CONF,
-                message=f"Backfill size must be positive",
+                message="Backfill size must be positive",
                 operation="init",
             )
         if self.stream_retry_delay <= 0:
             raise ManagerError(
                 reason=ManagerErrorReason.CONF,
-                message=f"Stream retry delay must be positive",
+                message="Stream retry delay must be positive",
                 operation="init",
             )
         if self.stream_retry_max_delay < self.stream_retry_delay:
             raise ManagerError(
                 reason=ManagerErrorReason.CONF,
-                message=f"Stream maximum retry delay cannot be less than retry delay",
+                message="Stream maximum retry delay cannot be less than retry delay",
                 operation="init",
             )

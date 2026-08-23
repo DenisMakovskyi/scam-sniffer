@@ -85,6 +85,7 @@ class BinanceStock(AbsStock):
                 reason=StockErrorReason.API_ERROR,
                 message="Binance API client configuration is invalid",
                 operation="init",
+                root_cause=error,
             ) from error
 
         super().__init__(
@@ -152,6 +153,7 @@ class BinanceStock(AbsStock):
                 reason=StockErrorReason.API_ERROR,
                 message="Binance kline request failed",
                 operation="get_klines",
+                root_cause=error,
             ) from error
 
     @override
@@ -184,6 +186,7 @@ class BinanceStock(AbsStock):
                 reason=StockErrorReason.API_ERROR,
                 message="Binance kline stream failed",
                 operation="stream_klines",
+                root_cause=error,
             ) from error
 
 def _validate_klines_request(
