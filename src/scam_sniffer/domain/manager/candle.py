@@ -667,9 +667,9 @@ class CandleManager:
 
                 _LOGGER.warning(
                     event="Candle stream disconnected",
+                    reason=error.reason,
                     symbol=symbol,
                     timeframe=timeframe,
-                    reason=error.reason,
                     retry_delay=retry_delay,
                 )
             else:

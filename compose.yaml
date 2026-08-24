@@ -1,22 +1,55 @@
 name: scam-sniffer
 
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - scam-sniffer.conf
+    environment:
+      SCAM_SNIFFER_DATABASE_CONFIG__DSN: postgresql://admin:you_got_scammed@timescaledb:5432/scam_sniffer
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
   timescaledb:
     image: timescale/timescaledb:latest-pg17
     environment:
       POSTGRES_DB: scam_sniffer
-      POSTGRES_USER: scam_sniffer
-      POSTGRES_PASSWORD: scam_sniffer
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: you_got_scammed
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scam_sniffer -d scam_sniffer"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d scam_sniffer"]
       timeout: 5s
       retries: 20
       interval: 5s
     restart: unless-stopped
+
+  database-clean:
+    image: timescale/timescaledb:latest-pg17
+    profiles:
+      - tools
+    environment:
+      PGPASSWORD: you_got_scammed
+    command:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - --host=timescaledb
+      - --dbname=scam_sniffer
+      - --username=admin
+      - --command=TRUNCATE TABLE candles;
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   timescaledb-data:
