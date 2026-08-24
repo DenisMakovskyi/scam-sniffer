@@ -51,6 +51,15 @@ async def test_timescale_migration_and_candle_upsert() -> None:
             )
             """
         )
+        is_close_time_migrated = await engine.pool.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM database_migrations
+                WHERE version = '0002_fix_candles_close_time'
+            )
+            """
+        )
         await dao.delete(
             market=open_candle.market,
             symbol=open_candle.symbol,
@@ -69,6 +78,7 @@ async def test_timescale_migration_and_candle_upsert() -> None:
         )
 
         assert is_hypertable is True
+        assert is_close_time_migrated is True
         assert stored == closed_candle
     finally:
         if is_migrated:

@@ -19,3 +19,11 @@ def ms_to_sec(millis: int | float | Decimal) -> float:
         Equivalent number of seconds.
     """
     return float(millis) / _MS_PER_SEC
+
+def from_timestamp(timestamp: int | float | Decimal) -> datetime:
+    """Convert a millisecond timestamp to a timezone-aware UTC datetime.
+
+    Args:
+        timestamp: Timestamp expressed in milliseconds since the epoch.
+    """
+    return datetime.fromtimestamp(tz=UTC, timestamp=ms_to_sec(timestamp))

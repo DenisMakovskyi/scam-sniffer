@@ -127,6 +127,7 @@ async def test_ws_config_reaches_api_client(
         await stock.close()
 
     assert candle.source is TransportDto.WS
+    assert candle.close_time == datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
     assert captured == {
         "uri": "wss://fstream.binance.com/market/ws/btcusdt@kline_5m",
         "max_queue": 7,
@@ -199,6 +200,7 @@ async def test_get_klines_maps_binance_response() -> None:
     assert len(candles) == 1
     assert candles[0].symbol == "BTCUSDT"
     assert candles[0].source is TransportDto.REST
+    assert candles[0].close_time == datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
     assert candles[0].trade_count == 42
     assert candles[0].is_closed is True
 

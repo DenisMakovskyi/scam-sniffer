@@ -29,7 +29,7 @@ from scam_sniffer.data.api.stock.mapping import (
 from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
 from scam_sniffer.data.api.client.config import ApiConfig
 
-from scam_sniffer.utils.datetime import ms_to_sec
+from scam_sniffer.utils.datetime import from_timestamp
 
 class BinanceStock(AbsStock):
     """Read historical and live USD-M futures candles from Binance."""
@@ -216,18 +216,9 @@ def _ws_build_candle(event: dict[str, Any]) -> CandleResponse:
             symbol=str(kline[BinanceMappingKey.SYMBOL]),
             is_closed=bool(kline[BinanceMappingKey.IS_CLOSED]),
             timeframe=TimeframeResponse(str(kline[BinanceMappingKey.TIMEFRAME])),
-            open_time=datetime.fromtimestamp(
-                tz=UTC,
-                timestamp=ms_to_sec(kline[BinanceMappingKey.OPEN_TIME]),
-            ),
-            close_time=datetime.fromtimestamp(
-                tz=UTC,
-                timestamp=ms_to_sec(kline[BinanceMappingKey.CLOSE_TIME]) + 1,
-            ),
-            event_time=datetime.fromtimestamp(
-                tz=UTC,
-                timestamp=ms_to_sec(event[BinanceMappingKey.EVENT_TIME]),
-            ),
+            open_time=from_timestamp(kline[BinanceMappingKey.OPEN_TIME]),
+            close_time=_adjust_close_datetime(kline[BinanceMappingKey.CLOSE_TIME]),
+            event_time=from_timestamp(event[BinanceMappingKey.EVENT_TIME]),
             open_price=Decimal(str(kline[BinanceMappingKey.OPEN_PRICE])),
             close_price=Decimal(str(kline[BinanceMappingKey.CLOSE_PRICE])),
             lowest_price=Decimal(str(kline[BinanceMappingKey.LOWEST_PRICE])),
@@ -265,10 +256,7 @@ def _rest_build_candle(
         symbol=symbol,
         is_closed=True,
         timeframe=timeframe,
-        open_time=datetime.fromtimestamp(
-            tz=UTC,
-            timestamp=ms_to_sec(row[BinanceMappingIndex.OPEN_TIME]),
-        ),
+        open_time=from_timestamp(row[BinanceMappingIndex.OPEN_TIME]),
         close_time=close_time,
         event_time=None,
         open_price=Decimal(str(row[BinanceMappingIndex.OPEN_PRICE])),
@@ -331,7 +319,15 @@ def _rest_close_datetime(row: list[Any]) -> datetime:
     """
     if len(row) < 11:
         raise ValueError(f"Expected at least 11 kline fields, received {len(row)}")
-    return datetime.fromtimestamp(
-        tz=UTC,
-        timestamp=ms_to_sec(row[BinanceMappingIndex.CLOSE_TIME]) + 1,
-    )
+    return _adjust_close_datetime(row[BinanceMappingIndex.CLOSE_TIME])
+
+def _adjust_close_datetime(millis: Any) -> datetime:
+    """Convert an inclusive Binance close millisecond into an exclusive UTC boundary.
+
+    Args:
+        millis: Inclusive Binance candle close time in milliseconds.
+
+    Returns:
+        Exclusive timezone-aware candle close boundary.
+    """
+    return from_timestamp(int(millis) + 1)
