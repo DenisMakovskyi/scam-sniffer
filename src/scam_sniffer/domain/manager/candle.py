@@ -8,23 +8,27 @@ from collections.abc import Awaitable, Callable
 
 import asyncio
 
+from scam_sniffer.core.log.logger import get_logger
 from scam_sniffer.core.events.proto import EventPublisher
+
 from scam_sniffer.domain.errors import (
     DomainError,
     ManagerError,
     DomainErrorReason,
-    ManagerErrorReason
+    ManagerErrorReason,
 )
 from scam_sniffer.domain.models import Candle, Market, Timeframe
+from scam_sniffer.domain.repository.candle import CandleRepository
 from scam_sniffer.domain.manager.config import CandleManagerConfig
 from scam_sniffer.domain.manager.events import (
     CandleEvent,
     CandleClosed,
     CandlesSynchronized,
 )
-from scam_sniffer.domain.repository.candle import CandleRepository
 
 from scam_sniffer.utils.datetime import now_utc
+
+_LOGGER = get_logger()
 
 class CandleManager:
     """Coordinate historical candle synchronization and live streams."""
@@ -79,6 +83,12 @@ class CandleManager:
             operation="backfill",
         )
         if candle is not None:
+            _LOGGER.debug(
+                event="Candle backfill skipped - series not empty",
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+            )
             return 0
 
         end_time = _cc_finish_time(
@@ -87,6 +97,15 @@ class CandleManager:
             operation="backfill",
         )
         start_time = end_time - timeframe.duration * self._config.backfill_size
+        _LOGGER.info(
+            event="Candle backfill started",
+            market=market,
+            symbol=symbol,
+            timeframe=timeframe,
+            start_time=start_time,
+            finish_time=end_time,
+            expected_count=self._config.backfill_size,
+        )
         sync_count = await self.__time_range_sync(
             symbol=symbol,
             timeframe=timeframe,
@@ -105,6 +124,13 @@ class CandleManager:
                 ),
                 operation="backfill",
             )
+        _LOGGER.info(
+            event="Candle backfill completed",
+            market=market,
+            symbol=symbol,
+            timeframe=timeframe,
+            synchronized_count=sync_count,
+        )
         return sync_count
 
     async def batch_fetch(
@@ -131,7 +157,7 @@ class CandleManager:
             ManagerError: If repository synchronization fails.
         """
         try:
-            return await self._repository.fetch_candles(
+            candles = await self._repository.fetch_candles(
                 symbol=symbol,
                 k_limit=k_limit,
                 timeframe=timeframe,
@@ -141,10 +167,20 @@ class CandleManager:
         except DomainError as error:
             raise ManagerError(
                 reason=ManagerErrorReason.REPOSITORY,
-                message="Candle batch synchronization failed",
+                message="Candle batch fetch failed",
                 operation="batch_fetch",
                 root_cause=error,
             ) from error
+        _LOGGER.debug(
+            event="Candle batch fected",
+            symbol=symbol,
+            k_limit=k_limit,
+            timeframe=timeframe,
+            start_time=start_time,
+            finish_time=finish_time,
+            synchronized_count=len(candles),
+        )
+        return candles
 
     async def batch_audit(
         self,
@@ -176,6 +212,13 @@ class CandleManager:
             operation="batch_audit",
         )
         if candle is None:
+            _LOGGER.debug(
+                event="Candle batch audit skipped",
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+                reason="series_empty",
+            )
             return 0
 
         end_time = candle.open_time + timeframe.duration
@@ -190,11 +233,12 @@ class CandleManager:
         )
         candles = [*candles, candle]
 
-        sync_count = 0
-        for gap_start_time, gap_finish_time in _cc_range_gaps(
+        gap_ranges = _cc_range_gaps(
             candles=candles,
             timeframe=timeframe,
-        ):
+        )
+        sync_count = 0
+        for gap_start_time, gap_finish_time in gap_ranges:
             sync_count += await self.__time_range_sync(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -213,6 +257,14 @@ class CandleManager:
                 ),
                 operation="batch_audit",
             )
+        _LOGGER.info(
+            "Candle batch audit completed",
+            market=market,
+            symbol=symbol,
+            timeframe=timeframe,
+            gap_count=len(gap_ranges),
+            synchronized_count=sync_count,
+        )
         return sync_count
 
     async def tail_gap_sync(
@@ -241,6 +293,13 @@ class CandleManager:
             operation="tail_gap_sync",
         )
         if candle is None:
+            _LOGGER.debug(
+                event="Candle gap synchronization skipped",
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+                reason="series_empty",
+            )
             return 0
 
         end_time = _cc_finish_time(
@@ -268,6 +327,13 @@ class CandleManager:
                 ),
                 operation="tail_gap_sync",
             )
+        _LOGGER.info(
+            event="Candle gap synchronization completed",
+            market=market,
+            symbol=symbol,
+            timeframe=timeframe,
+            synchronized_count=sync_count,
+        )
         return sync_count
 
     def start_stream_task(
@@ -299,6 +365,11 @@ class CandleManager:
         stream_task = self._stream_async_tasks.get(stream_key)
         if stream_task is not None:
             if not stream_task.done():
+                _LOGGER.debug(
+                    event="Candle stream task reused",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                )
                 return stream_task
             if not stream_task.cancelled():
                 task_error = stream_task.exception()
@@ -328,6 +399,11 @@ class CandleManager:
             name=f"candle_stream:{symbol}:{timeframe.value}",
         )
         self._stream_async_tasks[stream_key] = stream_task
+        _LOGGER.info(
+            event="Candle stream task started",
+            symbol=symbol,
+            timeframe=timeframe,
+        )
         return stream_task
 
     async def gather_stream_tasks(self) -> None:
@@ -338,6 +414,10 @@ class CandleManager:
         """
         tasks = list(self._stream_async_tasks.values())
         self._stream_async_tasks.clear()
+
+        if not tasks:
+            _LOGGER.debug(event="Candle stream gathering skipped - no active streams")
+            return
 
         for task in tasks:
             task.cancel()
@@ -355,6 +435,7 @@ class CandleManager:
                     operation="gather_stream_tasks",
                     root_cause=result,
                 ) from result
+        _LOGGER.info(event="Candle stream tasks stopped", stream_count=len(tasks))
 
     async def __publish(
         self,
@@ -379,6 +460,10 @@ class CandleManager:
                 operation=operation,
                 root_cause=error,
             ) from error
+        _LOGGER.debug(
+            event="Candle event published",
+            event_type=type(event).__name__,
+        )
 
     async def __get_last_cc(
         self,
@@ -512,11 +597,22 @@ class CandleManager:
         retry_delay = self._config.stream_retry_delay
         while True:
             has_updates = False
+            _LOGGER.info(
+                event="Candle stream connecting",
+                symbol=symbol,
+                timeframe=timeframe,
+            )
             try:
                 async for candle in self._repository.stream_candles(
                     symbol=symbol,
                     timeframe=timeframe,
                 ):
+                    if not has_updates:
+                        _LOGGER.info(
+                            event="Candle stream connected",
+                            symbol=symbol,
+                            timeframe=timeframe,
+                        )
                     if last_candle is not None and candle.open_time > last_candle.open_time:
                         start_time = (
                             last_candle.open_time + timeframe.duration
@@ -568,6 +664,21 @@ class CandleManager:
                         operation="streaming_loop",
                         root_cause=error,
                     ) from error
+
+                _LOGGER.warning(
+                    event="Candle stream disconnected",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=error.reason,
+                    retry_delay=retry_delay,
+                )
+            else:
+                _LOGGER.warning(
+                    event="Candle stream ended",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    retry_delay=retry_delay,
+                )
 
             await self._sleep_provider(retry_delay)
             if not has_updates:

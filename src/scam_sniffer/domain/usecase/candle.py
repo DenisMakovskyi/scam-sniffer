@@ -1,13 +1,17 @@
 """Candle synchronization and streaming use case."""
 
-import asyncio
 from typing import override
+
+import asyncio
+
+from scam_sniffer.core.log.logger import get_logger
 
 from scam_sniffer.domain.errors import ManagerError, ManagerErrorReason
 from scam_sniffer.domain.models import Market, Timeframe
-from scam_sniffer.domain.usecase.proto import UseCase
 from scam_sniffer.domain.manager.candle import CandleManager
+from scam_sniffer.domain.usecase.proto import UseCase
 
+_LOGGER = get_logger()
 _TIMEFRAMES = (
     Timeframe.M5,
     Timeframe.M15,
@@ -42,10 +46,21 @@ class CandleUseCase(UseCase):
             ManagerError: If synchronization or a stream task fails.
         """
         try:
+            _LOGGER.info(
+                event="Candle use case started",
+                market=self._market,
+                symbols=self._symbols,
+                timeframes=tuple(timeframe.value for timeframe in _TIMEFRAMES),
+            )
             await self.__sync_candles()
-            await self.__await_stream_tasks(self.__start_stream_tasks())
+            _LOGGER.info("Candle synchronization completed")
+
+            stream_async_tasks = self.__start_stream_tasks()
+            _LOGGER.info(event="Candle streams started", stream_count=len(stream_async_tasks))
+            await self.__await_stream_tasks(stream_async_tasks)
         finally:
             await self._manager.gather_stream_tasks()
+            _LOGGER.info("Candle use case stopped")
 
     async def __sync_candles(self) -> None:
         """Recover every configured candle series before live streaming."""

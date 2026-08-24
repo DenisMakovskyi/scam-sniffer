@@ -5,19 +5,22 @@ from __future__ import annotations
 from typing import Any, TypeVar
 from collections.abc import AsyncIterator, Callable
 
+from http import HTTPStatus
+
 import random
 import asyncio
-
-from http import HTTPStatus
 
 import json
 import httpx
 import websockets
 
-from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
+from scam_sniffer.core.log.logger import get_logger
+
 from scam_sniffer.data.api.client.config import ApiConfig
+from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
 
 T = TypeVar("T")
+_LOGGER = get_logger()
 
 class ApiClient:
     """Execute remote transport operations with bounded HTTP retries."""
@@ -61,6 +64,7 @@ class ApiClient:
     async def close(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
+        _LOGGER.debug("API client closed")
 
     async def http_get(self, path: str, params: dict[str, Any]) -> Any:
         """Execute a JSON HTTP GET request with bounded retries.
@@ -86,7 +90,15 @@ class ApiClient:
                             message="API rate limit is exceeded after bounded retries",
                             operation="get",
                         )
-                    await asyncio.sleep(_retry_delay(response=response, attempt=attempt))
+                    retry_delay = _retry_delay(response=response, attempt=attempt)
+                    _LOGGER.warning(
+                        "API rate limit retry scheduled",
+                        path=path,
+                        delay=retry_delay,
+                        attempt=attempt,
+                        max_attempts=self._max_attempts,
+                    )
+                    await asyncio.sleep(retry_delay)
                     continue
                 response.raise_for_status()
                 return response.json()
@@ -102,7 +114,15 @@ class ApiClient:
                 last_error = error
                 if attempt < self._max_attempts:
                     delay = min(self._max_retry_delay, 2 ** (attempt - 1))
-                    await asyncio.sleep(delay + random.uniform(0, 0.25))
+                    retry_delay = delay + random.uniform(0, 0.25)
+                    _LOGGER.warning(
+                        "API request retry scheduled",
+                        path=path,
+                        delay=retry_delay,
+                        attempt=attempt,
+                        max_attempts=self._max_attempts,
+                    )
+                    await asyncio.sleep(retry_delay)
 
         raise ApiError(
             reason=ApiErrorReason.CONNECTION,
@@ -135,6 +155,7 @@ class ApiClient:
                 close_timeout=self._ws_config.ws_close_timeout,
                 ping_interval=self._ws_config.ws_ping_interval,
             ) as websocket:
+                _LOGGER.info("API WebSocket connected", stream_name=stream_name)
                 async for message in websocket:
                     try:
                         event = json.loads(message)
@@ -145,6 +166,7 @@ class ApiClient:
                             operation="stream",
                         ) from error
                     yield event_parser(event)
+                _LOGGER.warning("API WebSocket ended", stream_name=stream_name)
         except asyncio.CancelledError:
             raise
         except ApiError:

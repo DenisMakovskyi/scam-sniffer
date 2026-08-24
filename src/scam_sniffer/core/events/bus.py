@@ -2,7 +2,10 @@
 
 from typing import cast, override
 
+from scam_sniffer.core.log.logger import get_logger
 from scam_sniffer.core.events.proto import EventPublisher, EventSubscriber
+
+_LOGGER = get_logger()
 
 class MemoEventBus(EventPublisher[object]):
     """Deliver events to type-specific in-memory subscribers."""
@@ -27,6 +30,11 @@ class MemoEventBus(EventPublisher[object]):
         subscribers = tuple(self._subscribers.get(type(event), ()))
         for subscriber in subscribers:
             await subscriber.on_event(event)
+        _LOGGER.debug(
+            event="Event published",
+            event_type=type(event).__name__,
+            subscriber_count=len(subscribers),
+        )
 
     def subscribe[TEvent](
         self,
@@ -45,8 +53,17 @@ class MemoEventBus(EventPublisher[object]):
         subscribers = self._subscribers.setdefault(event_type, [])
         stored_subscriber = cast(EventSubscriber[object], subscriber)
         if any(current is stored_subscriber for current in subscribers):
+            _LOGGER.debug(
+                event="Event subscription skipped - already subscribed",
+                event_type=event_type.__name__,
+            )
             return False
         subscribers.append(stored_subscriber)
+        _LOGGER.debug(
+            event="Event subscriber registered",
+            event_type=event_type.__name__,
+            subscriber_count=len(subscribers),
+        )
         return True
 
     def unsubscribe[TEvent](
@@ -65,6 +82,10 @@ class MemoEventBus(EventPublisher[object]):
         """
         subscribers = self._subscribers.get(event_type)
         if subscribers is None:
+            _LOGGER.debug(
+                event="Event unsubscription skipped - event is not registered",
+                event_type=event_type.__name__,
+            )
             return False
 
         stored_subscriber = cast(EventSubscriber[object], subscriber)
@@ -74,5 +95,14 @@ class MemoEventBus(EventPublisher[object]):
             subscribers.pop(index)
             if not subscribers:
                 self._subscribers.pop(event_type)
+            _LOGGER.debug(
+                event="Event subscriber removed",
+                event_type=event_type.__name__,
+                subscriber_count=len(subscribers),
+            )
             return True
+        _LOGGER.debug(
+            event="Event unsubscription skipped - subscriber not registered",
+            event_type=event_type.__name__,
+        )
         return False

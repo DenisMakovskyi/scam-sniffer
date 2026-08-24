@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scam_sniffer.core.log.config import LogConfig
 from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
 
 from scam_sniffer.data.api.client.config import ApiConfig, WsConfig
@@ -30,6 +31,7 @@ class AppConfig(BaseSettings):
         market: Market-data provider selected for the application run.
         symbols: Trading pair symbols processed by market-data use cases.
         api_config: Shared HTTP and WebSocket transport configuration.
+        log_config: Application log severity and renderer configuration.
         database_config: PostgreSQL connection pool configuration.
         candle_manager_config: Candle synchronization manager configuration.
         async_task_queue_config: Asynchronous task queue configuration.
@@ -48,6 +50,7 @@ class AppConfig(BaseSettings):
 
     market: Market = Market.BINANCE
     symbols: tuple[str, ...] = ("BTCUSDT",)
+    log_config: LogConfig = Field(default_factory=LogConfig)
     api_config: ApiConfig = Field(default=_DEFAULT_API_CONFIG)
     database_config: DatabaseConfig
     candle_manager_config: CandleManagerConfig = Field(default_factory=CandleManagerConfig)
@@ -65,6 +68,6 @@ class AppConfig(BaseSettings):
 
         Raises:
             ValueError: If a required value is missing or cannot be parsed.
-            ScamError: If a nested subsystem configuration is invalid.
+            AppError: If a nested subsystem configuration is invalid.
         """
         return cls(_env_file=path)

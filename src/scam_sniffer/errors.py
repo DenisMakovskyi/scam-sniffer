@@ -9,7 +9,8 @@ class AppError(RuntimeError):
 
     def __init__(
         self,
-        reason: StrEnum,
+        *,
+        reason: StrEnum | None = None,
         message: str,
         operation: str,
         root_cause: Exception | None = None,
@@ -17,13 +18,14 @@ class AppError(RuntimeError):
         """Initialize an application failure.
 
         Args:
-            reason: Layer-specific category describing the failure.
+            reason: Optional layer-specific category describing the failure.
             message: Human-readable failure description.
             operation: Operation active when the failure occurred.
             root_cause: Lower-level exception that caused the failure, if available.
         """
         super().__init__(message)
-        self.reason = reason
+        if reason is not None:
+            self.reason = reason
         self.operation = operation
         self.root_cause = root_cause
 

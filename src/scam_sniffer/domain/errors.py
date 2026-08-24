@@ -16,7 +16,7 @@ class DomainError(AppError):
         operation: str,
         root_cause: Exception | None = None,
     ) -> None:
-        """Initialize a domain repository failure.
+        """Initialize a domain failure.
 
         Args:
             reason: Domain failure category.
@@ -41,7 +41,7 @@ class ManagerError(AppError):
         operation: str,
         root_cause: Exception | None = None,
     ) -> None:
-        """Initialize an application manager failure.
+        """Initialize a manager failure.
 
         Args:
             reason: Manager failure category.

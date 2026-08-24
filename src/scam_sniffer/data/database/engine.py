@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import asyncio
 import asyncpg
 
+from scam_sniffer.core.log.logger import get_logger
 from scam_sniffer.data.database.schema.common import (
     MIGRATION_LOCK,
     MIGRATION_UNLOCK,
@@ -17,6 +18,7 @@ from scam_sniffer.data.database.schema.common import (
 )
 from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
 
+_LOGGER = get_logger()
 _MIGRATION_PATH = Path(__file__).with_name("migration")
 
 @dataclass(frozen=True, slots=True)
@@ -97,10 +99,12 @@ class DatabaseEngine:
             DatabaseError: If pool shutdown fails.
         """
         if self._pool is None:
+            _LOGGER.debug("Database close skipped - not connected")
             return
         try:
             await self._pool.close()
             self._pool = None
+            _LOGGER.info("Database connection closed")
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
             raise DatabaseError(
                 reason=DatabaseErrorReason.CONNECTION,
@@ -116,6 +120,7 @@ class DatabaseEngine:
             DatabaseError: If a pool connection cannot be established.
         """
         if self._pool is not None:
+            _LOGGER.debug("Database connect skipped - already connected")
             return
         try:
             self._pool = await asyncpg.create_pool(
@@ -123,6 +128,11 @@ class DatabaseEngine:
                 min_size=self._config.pool_min_size,
                 max_size=self._config.pool_max_size,
                 command_timeout=self._config.command_timeout,
+            )
+            _LOGGER.info(
+                event="Database connected",
+                pool_min_size=self._config.pool_min_size,
+                pool_max_size=self._config.pool_max_size,
             )
         except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as error:
             raise DatabaseError(
@@ -135,7 +145,7 @@ class DatabaseEngine:
         """Apply every pending SQL migration under an advisory lock.
 
         Raises:
-            DatabaseError: If migration are missing or cannot be applied.
+            DatabaseError: If migrations are missing or cannot be applied.
         """
         migrations = sorted(_MIGRATION_PATH.glob("*.sql"))
         if not migrations:
@@ -154,6 +164,10 @@ class DatabaseEngine:
                         await _apply_migration(migration=migration, connection=connection)
                 finally:
                     await connection.execute(MIGRATION_UNLOCK)
+            _LOGGER.info(
+                event="Database migrations completed",
+                migration_count=len(migrations),
+            )
         except DatabaseError:
             raise
         except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as error:
@@ -176,9 +190,11 @@ async def _apply_migration(
     version = migration.stem
     is_applied = await connection.fetchval(MIGRATION_VERSION_READ, version)
     if is_applied:
+        _LOGGER.debug(event="Database migration skipped", version=version)
         return
 
     statement = await asyncio.to_thread(migration.read_text, encoding="utf-8")
     async with connection.transaction():
         await connection.execute(statement)
         await connection.execute(MIGRATION_VERSION_CREATE, version)
+    _LOGGER.info(event="Database migration applied", version=version)

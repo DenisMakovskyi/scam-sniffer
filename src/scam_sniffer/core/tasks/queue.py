@@ -8,9 +8,12 @@ from collections.abc import Hashable
 
 import asyncio
 
-from scam_sniffer.core.tasks.proto import QueueTask, TaskQueue
-from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
+from scam_sniffer.core.log.logger import get_logger
 from scam_sniffer.core.tasks.errors import TaskQueueError, TaskQueueErrorReason
+from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
+from scam_sniffer.core.tasks.proto import QueueTask, TaskQueue
+
+_LOGGER = get_logger()
 
 class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
     """Execute bounded asynchronous tasks while suppressing duplicate keys."""
@@ -40,6 +43,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
             TaskQueueError: If no event loop is running.
         """
         if self._state is _TaskQueueState.RUNNING:
+            _LOGGER.debug("Task queue startup skipped - already running")
             return False
         if self._state is _TaskQueueState.STOPPING:
             raise TaskQueueError(
@@ -65,6 +69,11 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
             for worker_index in range(self._config.worker_count)
         ]
         self._state = _TaskQueueState.RUNNING
+        _LOGGER.info(
+            "Task queue started",
+            queue_size=self._config.queue_size,
+            worker_count=self._config.worker_count,
+        )
         return True
 
     @override
@@ -98,6 +107,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
                 root_cause=error,
             ) from error
         if is_duplicate:
+            _LOGGER.debug("Task queue submission deduplicated", task_key=task_key)
             return False
 
         try:
@@ -110,6 +120,11 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
                 root_cause=error,
             ) from error
         self._active_keys.add(task_key)
+        _LOGGER.debug(
+            "Task queue submission accepted",
+            task_key=task_key,
+            queue_size=self._queue.qsize(),
+        )
         return True
 
     @override
@@ -127,6 +142,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
             )
         await self._queue.join()
         self.__raise_execution_error(operation="wait_until_idle")
+        _LOGGER.debug("Task queue became idle")
 
     @override
     async def shutdown_gracefully(self) -> None:
@@ -136,6 +152,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
             TaskQueueError: If one or more tasks failed before shutdown.
         """
         if self._state is _TaskQueueState.STOPPED:
+            _LOGGER.debug("Task queue shutdown skipped", reason="already_stopped")
             return
         if self._state is _TaskQueueState.STOPPING:
             raise TaskQueueError(
@@ -162,6 +179,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
 
         if execution_error is not None:
             raise execution_error
+        _LOGGER.info("Task queue stopped", worker_count=len(worker_tasks))
 
     async def __worker_loop(self) -> None:
         """Execute queued tasks until the worker is cancelled."""
@@ -179,6 +197,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
             else:
                 self._active_keys.discard(task_key)
                 self.__cache_completed_key(task_key)
+                _LOGGER.debug("Task queue task completed", task_key=task_key)
             finally:
                 self._queue.task_done()
 

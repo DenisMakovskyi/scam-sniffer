@@ -4,21 +4,27 @@ import pytest
 from pydantic import ValidationError
 
 from scam_sniffer.config import AppConfig
-from scam_sniffer.domain.models import Market
+
 from scam_sniffer.core.tasks.errors import TaskQueueError
-from scam_sniffer.data.database.engine import DatabaseConfig
 from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
-from scam_sniffer.domain.manager.config import CandleManagerConfig
+from scam_sniffer.core.log.config import LogLevel, LogRenderer, LogConfig
+
 from scam_sniffer.data.api.client.config import ApiConfig, WsConfig
+from scam_sniffer.data.database.engine import DatabaseConfig
+
+from scam_sniffer.domain.models import Market
+from scam_sniffer.domain.manager.config import CandleManagerConfig
 
 _MARKET_KEY = "SCAM_SNIFFER_MARKET"
 _SYMBOLS_KEY = "SCAM_SNIFFER_SYMBOLS"
+_LOG_LEVEL_KEY = "SCAM_SNIFFER_LOG_CONFIG__LEVEL"
 _DATABASE_DSN_KEY = "SCAM_SNIFFER_DATABASE_CONFIG__DSN"
 _WORKER_COUNT_KEY = "SCAM_SNIFFER_ASYNC_TASK_QUEUE_CONFIG__WORKER_COUNT"
 
 _CONFIG_ENV_KEYS = (
     _MARKET_KEY,
     _SYMBOLS_KEY,
+    _LOG_LEVEL_KEY,
     _DATABASE_DSN_KEY,
     _WORKER_COUNT_KEY,
     "SCAM_SNIFFER_API_CONFIG__REST_URL",
@@ -33,6 +39,7 @@ _CONFIG_ENV_KEYS = (
     "SCAM_SNIFFER_DATABASE_CONFIG__POOL_MIN_SIZE",
     "SCAM_SNIFFER_DATABASE_CONFIG__POOL_MAX_SIZE",
     "SCAM_SNIFFER_DATABASE_CONFIG__COMMAND_TIMEOUT",
+    "SCAM_SNIFFER_LOG_CONFIG__RENDERER",
     "SCAM_SNIFFER_ASYNC_TASK_QUEUE_CONFIG__QUEUE_SIZE",
     "SCAM_SNIFFER_ASYNC_TASK_QUEUE_CONFIG__DEDUPE_CACHE_SIZE",
     "SCAM_SNIFFER_CANDLE_MANAGER_CONFIG__BATCH_SIZE",
@@ -56,6 +63,7 @@ def test_app_config_loads_nested_configs_from_conf_file(tmp_path: Path) -> None:
                 "SCAM_SNIFFER_MARKET=binance",
                 'SCAM_SNIFFER_SYMBOLS=["BTCUSDT","ETHUSDT"]',
                 "SCAM_SNIFFER_API_CONFIG__WS_CONFIG__WS_URL=wss://file/ws",
+                "SCAM_SNIFFER_LOG_CONFIG__LEVEL=debug",
                 "SCAM_SNIFFER_ASYNC_TASK_QUEUE_CONFIG__WORKER_COUNT=2",
                 "SCAM_SNIFFER_CANDLE_MANAGER_CONFIG__BACKFILL_SIZE=5000",
             )
@@ -69,12 +77,14 @@ def test_app_config_loads_nested_configs_from_conf_file(tmp_path: Path) -> None:
     assert config.symbols == ("BTCUSDT", "ETHUSDT")
     assert isinstance(config.api_config, ApiConfig)
     assert isinstance(config.database_config, DatabaseConfig)
+    assert isinstance(config.log_config, LogConfig)
     assert isinstance(config.api_config.ws_config, WsConfig)
     assert isinstance(config.async_task_queue_config, AsyncTaskQueueConfig)
     assert isinstance(config.candle_manager_config, CandleManagerConfig)
     assert config.api_config.ws_config.ws_url == "wss://file/ws"
     assert config.database_config.dsn == "postgresql://file/database"
     assert config.database_config.pool_max_size == 4
+    assert config.log_config.level is LogLevel.DEBUG
     assert config.async_task_queue_config.worker_count == 2
     assert config.candle_manager_config.backfill_size == 5_000
 
@@ -95,6 +105,7 @@ def test_app_config_environment_overrides_conf_file(
     )
     monkeypatch.setenv(_DATABASE_DSN_KEY, "postgresql://environment/database")
     monkeypatch.setenv(_SYMBOLS_KEY, '["ETHUSDT"]')
+    monkeypatch.setenv(_LOG_LEVEL_KEY, "critical")
     monkeypatch.setenv(_WORKER_COUNT_KEY, "4")
 
     config = AppConfig.load(path=config_path)
@@ -102,6 +113,7 @@ def test_app_config_environment_overrides_conf_file(
     assert config.api_config.ws_config.ws_url == "wss://file/ws"
     assert config.symbols == ("ETHUSDT",)
     assert config.database_config.dsn == "postgresql://environment/database"
+    assert config.log_config.level is LogLevel.CRITICAL
     assert config.async_task_queue_config.worker_count == 4
 
 def test_app_config_uses_nested_defaults(tmp_path: Path) -> None:
@@ -117,6 +129,8 @@ def test_app_config_uses_nested_defaults(tmp_path: Path) -> None:
     assert config.symbols == ("BTCUSDT",)
     assert config.api_config.rest_url == "https://fapi.binance.com"
     assert config.api_config.ws_config.ws_url == "wss://fstream.binance.com/market/ws"
+    assert config.log_config == LogConfig()
+    assert config.log_config.renderer is LogRenderer.CONSOLE
     assert config.async_task_queue_config == AsyncTaskQueueConfig()
     assert config.candle_manager_config == CandleManagerConfig()
 

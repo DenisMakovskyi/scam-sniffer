@@ -5,23 +5,26 @@ from collections.abc import Hashable
 import signal
 import asyncio
 
-from scam_sniffer.errors import AppError, AppErrorReason
 from scam_sniffer.config import AppConfig
+from scam_sniffer.errors import AppError, AppErrorReason
 
 from scam_sniffer.core.tasks.proto import TaskQueue
-from scam_sniffer.core.tasks.queue import AsyncTaskQueue
 from scam_sniffer.core.events.bus import MemoEventBus
+from scam_sniffer.core.log.logger import get_logger
+from scam_sniffer.core.tasks.queue import AsyncTaskQueue
 
 from scam_sniffer.data.api.stock.base import AbsStock
 from scam_sniffer.data.api.stock.binance import BinanceStock
-from scam_sniffer.data.database.engine import DatabaseEngine
 from scam_sniffer.data.database.dao.candle import CandleDao
+from scam_sniffer.data.database.engine import DatabaseEngine
 from scam_sniffer.data.repository.candle import CandleRepositoryImpl
 
 from scam_sniffer.domain.models import Market
+from scam_sniffer.domain.manager.candle import CandleManager
 from scam_sniffer.domain.usecase.proto import UseCase
 from scam_sniffer.domain.usecase.candle import CandleUseCase
-from scam_sniffer.domain.manager.candle import CandleManager
+
+_LOGGER = get_logger()
 
 class Application:
     """Own application dependencies and coordinate their lifecycle."""
@@ -60,6 +63,12 @@ class Application:
         try:
             await self.start()
             await self.__wait_for_shutdown(stop_event)
+        except asyncio.CancelledError:
+            _LOGGER.info("Application cancellation received")
+            raise
+        except Exception:
+            _LOGGER.critical("Application execution failed", exc_info=True)
+            raise
         finally:
             await self.shutdown()
 
@@ -74,6 +83,7 @@ class Application:
             Exception: If a dependency or use case cannot start.
         """
         if self._started:
+            _LOGGER.debug("Application startup skipped", reason="already_started")
             return False
         if self._shutdown:
             raise AppError(
@@ -81,6 +91,12 @@ class Application:
                 message="Application cannot restart after shutdown",
                 operation="start",
             )
+
+        _LOGGER.info(
+            "Application startup started",
+            market=self._config.market,
+            symbols=self._config.symbols,
+        )
 
         await self._database_engine.connect()
         await self._database_engine.migrate()
@@ -90,6 +106,11 @@ class Application:
         self.__execute_use_cases()
 
         self._started = True
+        _LOGGER.info(
+            "Application started",
+            market=self._config.market,
+            use_case_count=len(self._use_cases),
+        )
         return True
 
     async def shutdown(self) -> None:
@@ -100,7 +121,10 @@ class Application:
             ExceptionGroup: If multiple resources fail to stop.
         """
         if self._shutdown:
+            _LOGGER.debug("Application shutdown skipped", reason="already_shutdown")
             return
+
+        _LOGGER.info("Application shutdown started")
 
         errors: list[Exception] = []
         use_case_tasks = self._use_case_tasks
@@ -138,9 +162,22 @@ class Application:
             errors.append(error)
 
         if len(errors) == 1:
-            raise errors[0]
+            shutdown_error = errors[0]
+            _LOGGER.error(
+                "Application shutdown failed",
+                error_count=1,
+                exc_info=shutdown_error,
+            )
+            raise shutdown_error
         if errors:
-            raise ExceptionGroup("Application shutdown failed", errors)
+            shutdown_error = ExceptionGroup("Application shutdown failed", errors)
+            _LOGGER.error(
+                "Application shutdown failed",
+                error_count=len(errors),
+                exc_info=shutdown_error,
+            )
+            raise shutdown_error
+        _LOGGER.info("Application shutdown completed")
 
     def __build_stock(self, market: Market) -> AbsStock:
         """Build the configured market-data source implementation.
