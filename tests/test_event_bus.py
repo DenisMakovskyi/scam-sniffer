@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from scam_sniffer.domain.events.bus import MemoEventBus
-from scam_sniffer.domain.events.proto import EventPublisher
+from scam_sniffer.core.events import MemoEventBus
+from scam_sniffer.core.events import EventPublisher
 
 @dataclass(frozen=True, slots=True)
 class FirstEvent:

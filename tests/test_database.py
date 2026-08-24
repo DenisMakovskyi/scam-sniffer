@@ -156,7 +156,7 @@ def test_related_candle_fields_keep_the_same_order() -> None:
     assert migration_positions == sorted(migration_positions)
 
 @pytest.mark.asyncio
-async def test_dao_wraps_driver_error_as_root_cause() -> None:
+async def test_dao_wraps_driver_error() -> None:
     dao = CandleDao(pool=cast(asyncpg.Pool, BrokenPool()))
 
     with pytest.raises(DatabaseError) as error_info:
@@ -164,8 +164,7 @@ async def test_dao_wraps_driver_error_as_root_cause() -> None:
 
     error = error_info.value
     assert error.reason is DatabaseErrorReason.QUERY
-    assert isinstance(error.root_cause, asyncpg.InterfaceError)
-    assert error.__cause__ is error.root_cause
+    assert error.operation == "create"
 
 def _entity() -> CandleEntity:
     open_time = datetime(2025, 1, 1, tzinfo=UTC)

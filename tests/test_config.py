@@ -4,16 +4,21 @@ import pytest
 from pydantic import ValidationError
 
 from scam_sniffer.config import AppConfig
-from scam_sniffer.domain.errors import TaskQueueError
-from scam_sniffer.domain.tasks.config import AsyncTaskQueueConfig
+from scam_sniffer.domain.models import Market
+from scam_sniffer.core.tasks.errors import TaskQueueError
 from scam_sniffer.data.database.engine import DatabaseConfig
+from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
 from scam_sniffer.domain.manager.config import CandleManagerConfig
 from scam_sniffer.data.api.client.config import ApiConfig, WsConfig
 
+_MARKET_KEY = "SCAM_SNIFFER_MARKET"
+_SYMBOLS_KEY = "SCAM_SNIFFER_SYMBOLS"
 _DATABASE_DSN_KEY = "SCAM_SNIFFER_DATABASE_CONFIG__DSN"
 _WORKER_COUNT_KEY = "SCAM_SNIFFER_ASYNC_TASK_QUEUE_CONFIG__WORKER_COUNT"
 
 _CONFIG_ENV_KEYS = (
+    _MARKET_KEY,
+    _SYMBOLS_KEY,
     _DATABASE_DSN_KEY,
     _WORKER_COUNT_KEY,
     "SCAM_SNIFFER_API_CONFIG__REST_URL",
@@ -48,6 +53,8 @@ def test_app_config_loads_nested_configs_from_conf_file(tmp_path: Path) -> None:
             (
                 "SCAM_SNIFFER_DATABASE_CONFIG__DSN=postgresql://file/database",
                 "SCAM_SNIFFER_DATABASE_CONFIG__POOL_MAX_SIZE=4",
+                "SCAM_SNIFFER_MARKET=binance",
+                'SCAM_SNIFFER_SYMBOLS=["BTCUSDT","ETHUSDT"]',
                 "SCAM_SNIFFER_API_CONFIG__WS_CONFIG__WS_URL=wss://file/ws",
                 "SCAM_SNIFFER_ASYNC_TASK_QUEUE_CONFIG__WORKER_COUNT=2",
                 "SCAM_SNIFFER_CANDLE_MANAGER_CONFIG__BACKFILL_SIZE=5000",
@@ -58,6 +65,8 @@ def test_app_config_loads_nested_configs_from_conf_file(tmp_path: Path) -> None:
 
     config = AppConfig.load(path=config_path)
 
+    assert config.market is Market.BINANCE
+    assert config.symbols == ("BTCUSDT", "ETHUSDT")
     assert isinstance(config.api_config, ApiConfig)
     assert isinstance(config.database_config, DatabaseConfig)
     assert isinstance(config.api_config.ws_config, WsConfig)
@@ -85,11 +94,13 @@ def test_app_config_environment_overrides_conf_file(
         encoding="utf-8",
     )
     monkeypatch.setenv(_DATABASE_DSN_KEY, "postgresql://environment/database")
+    monkeypatch.setenv(_SYMBOLS_KEY, '["ETHUSDT"]')
     monkeypatch.setenv(_WORKER_COUNT_KEY, "4")
 
     config = AppConfig.load(path=config_path)
 
     assert config.api_config.ws_config.ws_url == "wss://file/ws"
+    assert config.symbols == ("ETHUSDT",)
     assert config.database_config.dsn == "postgresql://environment/database"
     assert config.async_task_queue_config.worker_count == 4
 
@@ -102,8 +113,10 @@ def test_app_config_uses_nested_defaults(tmp_path: Path) -> None:
 
     config = AppConfig.load(path=config_path)
 
+    assert config.market is Market.BINANCE
+    assert config.symbols == ("BTCUSDT",)
     assert config.api_config.rest_url == "https://fapi.binance.com"
-    assert config.api_config.ws_config.ws_url == "wss://fstream.binance.com/ws"
+    assert config.api_config.ws_config.ws_url == "wss://fstream.binance.com/market/ws"
     assert config.async_task_queue_config == AsyncTaskQueueConfig()
     assert config.candle_manager_config == CandleManagerConfig()
 

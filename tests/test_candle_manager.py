@@ -15,7 +15,7 @@ from scam_sniffer.domain.manager.events import (
     CandlesSynchronized,
 )
 from scam_sniffer.domain.models import Candle, Market, Timeframe
-from scam_sniffer.domain.events.proto import EventPublisher
+from scam_sniffer.core.events import EventPublisher
 from scam_sniffer.domain.repository.candle import CandleRepository
 from scam_sniffer.domain.errors import (
     DomainError,

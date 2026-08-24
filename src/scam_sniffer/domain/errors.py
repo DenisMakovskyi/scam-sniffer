@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from scam_sniffer.errors import ScamError
+from scam_sniffer.errors import AppError
 
-class DomainError(ScamError):
+class DomainError(AppError):
     """Represent a repository failure at the domain boundary."""
 
     def __init__(
@@ -31,7 +31,7 @@ class DomainError(ScamError):
             root_cause=root_cause,
         )
 
-class ManagerError(ScamError):
+class ManagerError(AppError):
     """Represent a manager configuration or workflow failure."""
 
     def __init__(
@@ -56,31 +56,6 @@ class ManagerError(ScamError):
             root_cause=root_cause,
         )
 
-class TaskQueueError(ScamError):
-    """Represent a task queue configuration or lifecycle failure."""
-
-    def __init__(
-        self,
-        reason: TaskQueueErrorReason,
-        message: str,
-        operation: str,
-        root_cause: Exception | None = None,
-    ) -> None:
-        """Initialize a task queue failure.
-
-        Args:
-            reason: Task queue failure category.
-            message: Human-readable failure description.
-            operation: Queue operation active during the failure.
-            root_cause: Lower-level task failure, if available.
-        """
-        super().__init__(
-            reason=reason,
-            message=message,
-            operation=operation,
-            root_cause=root_cause,
-        )
-
 class DomainErrorReason(StrEnum):
     """Categorize failures crossing the domain repository boundary."""
 
@@ -97,12 +72,3 @@ class ManagerErrorReason(StrEnum):
     PUBLISHER = "publisher"
     CONTINUITY = "continuity"
     REPOSITORY = "repository"
-
-class TaskQueueErrorReason(StrEnum):
-    """Categorize failures produced by asynchronous task queues."""
-
-    CONF = "conf"
-    FULL = "full"
-    PARAMS = "params"
-    EXECUTION = "execution"
-    LIFECYCLE = "lifecycle"

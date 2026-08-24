@@ -8,9 +8,9 @@ from collections.abc import Hashable
 
 import asyncio
 
-from scam_sniffer.domain.errors import TaskQueueError, TaskQueueErrorReason
-from scam_sniffer.domain.tasks.config import AsyncTaskQueueConfig
-from scam_sniffer.domain.tasks.proto import QueueTask, TaskQueue
+from scam_sniffer.core.tasks.proto import QueueTask, TaskQueue
+from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
+from scam_sniffer.core.tasks.errors import TaskQueueError, TaskQueueErrorReason
 
 class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
     """Execute bounded asynchronous tasks while suppressing duplicate keys."""
@@ -104,7 +104,7 @@ class AsyncTaskQueue[TKey: Hashable](TaskQueue[TKey]):
             self._queue.put_nowait(task)
         except asyncio.QueueFull as error:
             raise TaskQueueError(
-                reason=TaskQueueErrorReason.FULL,
+                reason=TaskQueueErrorReason.CAPACITY,
                 message="Task queue capacity has been reached",
                 operation="submit",
                 root_cause=error,

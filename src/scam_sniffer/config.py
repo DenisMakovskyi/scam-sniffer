@@ -6,15 +6,18 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
+
 from scam_sniffer.data.api.client.config import ApiConfig, WsConfig
 from scam_sniffer.data.database.engine import DatabaseConfig
-from scam_sniffer.domain.tasks.config import AsyncTaskQueueConfig
+
+from scam_sniffer.domain.models import Market
 from scam_sniffer.domain.manager.config import CandleManagerConfig
 
 _CONFIG_PATH = Path("scam-sniffer.conf")
 _DEFAULT_API_CONFIG = ApiConfig(
     rest_url="https://fapi.binance.com",
-    ws_config=WsConfig(ws_url="wss://fstream.binance.com/ws"),
+    ws_config=WsConfig(ws_url="wss://fstream.binance.com/market/ws"),
 )
 
 class AppConfig(BaseSettings):
@@ -24,6 +27,8 @@ class AppConfig(BaseSettings):
     ``scam-sniffer.conf`` file. Nested fields use a double underscore delimiter.
 
     Attributes:
+        market: Market-data provider selected for the application run.
+        symbols: Trading pair symbols processed by market-data use cases.
         api_config: Shared HTTP and WebSocket transport configuration.
         database_config: PostgreSQL connection pool configuration.
         candle_manager_config: Candle synchronization manager configuration.
@@ -41,6 +46,8 @@ class AppConfig(BaseSettings):
         env_nested_delimiter="__",
     )
 
+    market: Market = Market.BINANCE
+    symbols: tuple[str, ...] = ("BTCUSDT",)
     api_config: ApiConfig = Field(default=_DEFAULT_API_CONFIG)
     database_config: DatabaseConfig
     candle_manager_config: CandleManagerConfig = Field(default_factory=CandleManagerConfig)

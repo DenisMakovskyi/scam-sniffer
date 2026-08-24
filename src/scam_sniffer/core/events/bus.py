@@ -2,7 +2,7 @@
 
 from typing import cast, override
 
-from scam_sniffer.domain.events.proto import EventPublisher, EventSubscriber
+from scam_sniffer.core.events.proto import EventPublisher, EventSubscriber
 
 class MemoEventBus(EventPublisher[object]):
     """Deliver events to type-specific in-memory subscribers."""

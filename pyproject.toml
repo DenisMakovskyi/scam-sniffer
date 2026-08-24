@@ -37,7 +37,7 @@ scam-sniffer = "scam_sniffer.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scam_sniffer"]
-artifacts = ["src/scam_sniffer/data/database/migrations/*.sql"]
+artifacts = ["src/scam_sniffer/data/database/migration/*.sql"]
 
 [tool.ruff]
 line-length = 100

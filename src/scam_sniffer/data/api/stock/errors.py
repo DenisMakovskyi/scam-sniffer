@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from scam_sniffer.errors import ScamError
+from scam_sniffer.errors import AppError
 
-class StockError(ScamError):
+class StockError(AppError):
     """Represent an exchange integration failure."""
 
     def __init__(

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from pathlib import Path
+from dataclasses import dataclass
 
 import asyncio
 import asyncpg
 
-from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
 from scam_sniffer.data.database.schema.common import (
     MIGRATION_LOCK,
     MIGRATION_UNLOCK,
@@ -17,6 +15,7 @@ from scam_sniffer.data.database.schema.common import (
     MIGRATION_VERSION_READ,
     MIGRATION_VERSION_CREATE,
 )
+from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
 
 _MIGRATION_PATH = Path(__file__).with_name("migration")
 
@@ -107,9 +106,9 @@ class DatabaseEngine:
                 reason=DatabaseErrorReason.CONNECTION,
                 message="Database pool shutdown failed",
                 operation="close",
-                root_cause=error,
             ) from error
 
+    # noinspection unresolved-references
     async def connect(self) -> None:
         """Create the PostgreSQL pool when it is not connected.
 
@@ -130,7 +129,6 @@ class DatabaseEngine:
                 reason=DatabaseErrorReason.CONNECTION,
                 message="Database connection failed",
                 operation="connect",
-                root_cause=error,
             ) from error
 
     async def migrate(self) -> None:
@@ -163,7 +161,6 @@ class DatabaseEngine:
                 reason=DatabaseErrorReason.MIGRATION,
                 message="Database migration failed",
                 operation="migrate",
-                root_cause=error,
             ) from error
 
 async def _apply_migration(

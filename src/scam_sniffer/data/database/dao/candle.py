@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
-from collections.abc import Mapping, Sequence
-
 from datetime import datetime
+from collections.abc import Mapping, Sequence
 
 import asyncpg
 
-from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
-from scam_sniffer.data.database.entities import CandleEntity
 from scam_sniffer.data.database.schema.candle import (
     CANDLE_SELECT,
     CANDLE_CREATE,
@@ -21,6 +18,8 @@ from scam_sniffer.data.database.schema.candle import (
     CANDLE_SELECT_LATEST,
     CANDLE_SELECT_LATEST_CLOSED,
 )
+from scam_sniffer.data.database.errors import DatabaseError, DatabaseErrorReason
+from scam_sniffer.data.database.entities import CandleEntity
 
 class CandleDao:
     """Execute candle CRUD operations against PostgreSQL."""
@@ -65,7 +64,7 @@ class CandleDao:
                 open_time,
             )
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="select", root_cause=error) from error
+            raise _raise_db_query_error("select") from error
         return _build_entity(row) if row is not None else None
 
     async def select_range(
@@ -101,7 +100,7 @@ class CandleDao:
                 finish_time,
             )
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="select_range", root_cause=error) from error
+            raise _raise_db_query_error("select_range") from error
         return [_build_entity(row) for row in rows]
 
     async def select_latest(
@@ -131,7 +130,7 @@ class CandleDao:
                 timeframe,
             )
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="select_latest", root_cause=error) from error
+            raise _raise_db_query_error("select_latest") from error
         return _build_entity(row) if row is not None else None
 
     async def select_latest_closed(
@@ -161,7 +160,7 @@ class CandleDao:
                 timeframe,
             )
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="select_latest_closed", root_cause=error) from error
+            raise _raise_db_query_error("select_latest_closed") from error
         return _build_entity(row) if row is not None else None
 
     # Create region
@@ -178,7 +177,7 @@ class CandleDao:
         try:
             await self._pool.execute(CANDLE_CREATE, *_entity_args(entity))
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="create", root_cause=error) from error
+            raise _raise_db_query_error("create") from error
 
     # Upsert region
 
@@ -197,7 +196,7 @@ class CandleDao:
         try:
             status = await self._pool.execute(CANDLE_UPSERT, *_entity_args(entity))
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="upsert_one", root_cause=error) from error
+            raise _raise_db_query_error("upsert_one") from error
         return _rows_count(status) == 1
 
     async def upsert_many(self, entities: Sequence[CandleEntity]) -> None:
@@ -217,7 +216,7 @@ class CandleDao:
                 [_entity_args(entity) for entity in entities],
             )
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="upsert_many", root_cause=error) from error
+            raise _raise_db_query_error("upsert_many") from error
 
     # Update region
 
@@ -236,7 +235,7 @@ class CandleDao:
         try:
             status = await self._pool.execute(CANDLE_UPDATE, *_entity_args(entity))
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="update", root_cause=error) from error
+            raise _raise_db_query_error("update") from error
         return _rows_count(status) == 1
 
     # Delete region
@@ -271,7 +270,7 @@ class CandleDao:
                 open_time,
             )
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
-            raise _db_query_error(operation="delete", root_cause=error) from error
+            raise _raise_db_query_error("delete") from error
         return _rows_count(status) == 1
 
 def _rows_count(status: str) -> int:
@@ -340,19 +339,17 @@ def _build_entity(row: Mapping[str, Any]) -> CandleEntity:
         volume_quote=row["volume_quote"],
     )
 
-def _db_query_error(operation: str, root_cause: Exception) -> DatabaseError:
+def _raise_db_query_error(operation: str) -> DatabaseError:
     """Wrap a driver exception as a categorized database error.
 
     Args:
         operation: DAO operation active during the failure.
-        root_cause: Original driver exception.
 
     Returns:
-        Database query error retaining the original cause.
+        Categorized database query error.
     """
     return DatabaseError(
         reason=DatabaseErrorReason.QUERY,
         message="Database query failed",
         operation=operation,
-        root_cause=root_cause,
     )

@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 
 import asyncio
 
+from scam_sniffer.core.events.proto import EventPublisher
 from scam_sniffer.domain.errors import (
     DomainError,
     ManagerError,
@@ -15,10 +16,9 @@ from scam_sniffer.domain.errors import (
     ManagerErrorReason
 )
 from scam_sniffer.domain.models import Candle, Market, Timeframe
-from scam_sniffer.domain.events.proto import EventPublisher
 from scam_sniffer.domain.manager.config import CandleManagerConfig
 from scam_sniffer.domain.manager.events import (
-CandleEvent,
+    CandleEvent,
     CandleClosed,
     CandlesSynchronized,
 )

@@ -16,7 +16,7 @@ from scam_sniffer.data.api.stock.models import TransportDto, TimeframeResponse
 
 _API_CONFIG = ApiConfig(
     rest_url="https://fapi.binance.com",
-    ws_config=WsConfig(ws_url="wss://fstream.binance.com/ws"),
+    ws_config=WsConfig(ws_url="wss://fstream.binance.com/market/ws"),
     max_attempts=1,
 )
 
@@ -57,6 +57,27 @@ def test_init_absorbs_api_client_error_as_root_cause(
     assert error.__cause__ is error.root_cause
 
 @pytest.mark.asyncio
+async def test_init_builds_valid_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    original_async_client = httpx.AsyncClient
+
+    def async_client(**kwargs: Any) -> httpx.AsyncClient:
+        captured.update(kwargs)
+        return original_async_client()
+
+    monkeypatch.setattr("scam_sniffer.data.api.client.client.httpx.AsyncClient", async_client)
+    stock = BinanceStock(config=_API_CONFIG)
+    await stock.close()
+
+    headers = captured["headers"]
+    user_agent = headers["User-Agent"]
+    assert user_agent == user_agent.strip()
+    assert user_agent.startswith("Mozilla/5.0")
+    assert httpx.Headers(headers)["User-Agent"] == user_agent
+
+@pytest.mark.asyncio
 async def test_ws_config_reaches_api_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -90,7 +111,7 @@ async def test_ws_config_reaches_api_client(
         config=ApiConfig(
             rest_url="https://fapi.binance.com",
             ws_config=WsConfig(
-                ws_url="wss://fstream.binance.com/ws",
+                ws_url="wss://fstream.binance.com/market/ws",
                 ws_queue_size=7,
                 ws_ping_timeout=8.0,
                 ws_ping_interval=9.0,
@@ -107,7 +128,7 @@ async def test_ws_config_reaches_api_client(
 
     assert candle.source is TransportDto.WS
     assert captured == {
-        "uri": "wss://fstream.binance.com/ws/btcusdt@kline_5m",
+        "uri": "wss://fstream.binance.com/market/ws/btcusdt@kline_5m",
         "max_queue": 7,
         "ping_timeout": 8.0,
         "close_timeout": 10.0,

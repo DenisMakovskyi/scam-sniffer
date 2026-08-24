@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from scam_sniffer.domain.errors import TaskQueueError, TaskQueueErrorReason
+from scam_sniffer.core.tasks.errors import TaskQueueError, TaskQueueErrorReason
 
 @dataclass(frozen=True, slots=True)
 class AsyncTaskQueueConfig:

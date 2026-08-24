@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from scam_sniffer.errors import ScamError
+from scam_sniffer.errors import AppError
 
-class ApiError(ScamError):
+class ApiError(AppError):
     """Represent an HTTP or WebSocket transport failure."""
 
     def __init__(

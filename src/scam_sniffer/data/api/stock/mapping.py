@@ -33,6 +33,8 @@ class BinanceMappingIndex(IntEnum):
     VOLUME_QUOTE = 7
 
 class BinanceRequestParam(StrEnum):
+    """Map Binance REST request parameters to their transport names."""
+
     SYMBOL = "symbol"
     K_LIMIT = "limit"
     INTERVAL = "interval"

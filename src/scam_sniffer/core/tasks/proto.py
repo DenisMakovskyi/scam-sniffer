@@ -1,4 +1,4 @@
-"""Typed contracts for asynchronous task execution."""
+"""Core typed contracts for asynchronous task execution."""
 
 from typing import Protocol
 from collections.abc import Hashable

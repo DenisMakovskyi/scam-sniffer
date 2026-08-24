@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-class ScamError(RuntimeError):
+class AppError(RuntimeError):
     """Represent a categorized application failure with its root cause."""
 
     def __init__(
@@ -26,3 +26,8 @@ class ScamError(RuntimeError):
         self.reason = reason
         self.operation = operation
         self.root_cause = root_cause
+
+class AppErrorReason(StrEnum):
+    """Categorize failures produced by the application runner."""
+
+    LIFECYCLE = "lifecycle"

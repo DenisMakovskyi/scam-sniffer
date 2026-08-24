@@ -1,4 +1,4 @@
-"""Candle repository combining exchange and database data sources."""
+"""Candle repository impl. combining remote and database data sources."""
 
 from __future__ import annotations
 

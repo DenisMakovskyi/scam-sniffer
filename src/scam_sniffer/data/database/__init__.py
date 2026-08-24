@@ -1,1 +1,1 @@
-"""Timeseries persistence infrastructure."""
+"""DB persistence infrastructure."""

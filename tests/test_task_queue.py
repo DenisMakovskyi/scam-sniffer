@@ -4,9 +4,9 @@ from collections.abc import Hashable
 
 import pytest
 
-from scam_sniffer.domain.tasks.config import AsyncTaskQueueConfig
-from scam_sniffer.domain.errors import TaskQueueError, TaskQueueErrorReason
-from scam_sniffer.domain.tasks.queue import AsyncTaskQueue
+from scam_sniffer.core.tasks.queue import AsyncTaskQueue
+from scam_sniffer.core.tasks.config import AsyncTaskQueueConfig
+from scam_sniffer.core.tasks.errors import TaskQueueError, TaskQueueErrorReason
 
 class FakeQueueTask:
     def __init__(
@@ -284,7 +284,7 @@ async def test_task_queue_rejects_submission_when_capacity_is_reached() -> None:
     with pytest.raises(TaskQueueError) as error_info:
         task_queue.submit(FakeQueueTask(key="rejected", calls=calls))
 
-    assert error_info.value.reason is TaskQueueErrorReason.FULL
+    assert error_info.value.reason is TaskQueueErrorReason.CAPACITY
     release_event.set()
     await task_queue.wait_until_idle()
 

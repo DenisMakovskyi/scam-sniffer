@@ -10,24 +10,26 @@ from decimal import Decimal, InvalidOperation
 from datetime import UTC, datetime
 
 from http import HTTPStatus
+
 import httpx
 
+from scam_sniffer.data.api.stock.base import AbsStock
+from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
 from scam_sniffer.data.api.stock.models import (
     MarketDto,
     TransportDto,
     CandleResponse,
     TimeframeResponse,
 )
-from scam_sniffer.utils.datetime import ms_to_sec
-from scam_sniffer.data.api.stock.base import AbsStock
-from scam_sniffer.data.api.client.config import ApiConfig
-from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
-from scam_sniffer.data.api.stock.errors import StockError, StockErrorReason
 from scam_sniffer.data.api.stock.mapping import (
     BinanceMappingKey,
     BinanceMappingIndex,
     BinanceRequestParam,
 )
+from scam_sniffer.data.api.client.errors import ApiError, ApiErrorReason
+from scam_sniffer.data.api.client.config import ApiConfig
+
+from scam_sniffer.utils.datetime import ms_to_sec
 
 class BinanceStock(AbsStock):
     """Read historical and live USD-M futures candles from Binance."""
@@ -36,9 +38,9 @@ class BinanceStock(AbsStock):
 
     __HEADER_USER_AGENT_KEY = "User-Agent"
     __HEADER_USER_AGENT_VALUE = (
-        "Chrome/131.0.0.0 Safari/537.36"
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
     )
     __RATE_LIMIT_HTTP_STATUS_CODES = frozenset(
         {
